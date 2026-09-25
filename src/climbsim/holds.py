@@ -24,10 +24,16 @@ class HoldType(str, Enum):
 
 
 HOLD_PROPERTIES = {
-    HoldType.JUG: dict(friction=1.3, max_grip_n=1400.0, radius=0.045),
-    HoldType.CRIMP: dict(friction=1.1, max_grip_n=550.0, radius=0.018),
-    HoldType.SLOPER: dict(friction=0.55, max_grip_n=900.0, radius=0.06),
-    HoldType.FOOTHOLD: dict(friction=1.0, max_grip_n=800.0, radius=0.02),
+    HoldType.JUG: dict(friction=1.3, max_grip_n=1400.0, radius=0.06),
+    HoldType.CRIMP: dict(friction=1.1, max_grip_n=550.0, radius=0.03),
+    HoldType.SLOPER: dict(friction=0.55, max_grip_n=900.0, radius=0.075),
+    # A stiff climbing shoe edging on a solid foot chip routinely takes well over 1x
+    # bodyweight in a single-foot stance (the other foot momentarily unweighted while it
+    # repositions) -- raised from an initial 800N after that exact scenario (~1.5x a 70kg
+    # climber's bodyweight, ~1020N, during a normal, unhurried foot-swap on the
+    # `easy_ladder` demo route) came out physically plausible but tripped too
+    # conservative a cap.
+    HoldType.FOOTHOLD: dict(friction=1.0, max_grip_n=1200.0, radius=0.035),
 }
 
 

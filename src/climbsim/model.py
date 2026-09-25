@@ -61,12 +61,36 @@ def _joint_xml(spec: A.JointSpec, name: str) -> str:
     ax = " ".join(str(a) for a in spec.axis)
     lo, hi = spec.range_deg
     return (f'<joint name="{name}" type="hinge" axis="{ax}" '
-            f'range="{lo} {hi}" damping="0.6" armature="0.02"/>')
+            f'range="{lo} {hi}" damping="1.5" armature="0.02"/>')
+
+
+def _joint_spec_for(joint_name: str) -> A.JointSpec:
+    """Map a compiled joint name (e.g. 'shoulder_flex_L') back to its JointSpec,
+    so the actuator can be torque-limited to the same peak value anthropometry.py
+    documents for that joint."""
+    if joint_name.startswith("shoulder_"):
+        idx = {"flex": 0, "abd": 1, "rot": 2}[joint_name.split("_")[1]]
+        return A.SHOULDER_JOINTS[idx]
+    if joint_name.startswith("elbow"):
+        return A.ELBOW_JOINT
+    if joint_name.startswith("hip_"):
+        idx = {"flex": 0, "abd": 1, "rot": 2}[joint_name.split("_")[1]]
+        return A.HIP_JOINTS[idx]
+    if joint_name.startswith("knee"):
+        return A.KNEE_JOINT
+    raise ValueError(joint_name)
 
 
 def _actuator_xml(joint_name: str) -> str:
+    # forcerange caps actuator torque at the joint's real peak voluntary torque (see
+    # anthropometry.py) -- without it, the position servo can apply unbounded torque to
+    # snap a limb to its target, producing unrealistically large, jerky reaction loads on
+    # the still-anchored limbs during a move (a real climber can't yank a limb into place
+    # arbitrarily fast either).
+    torque = _joint_spec_for(joint_name).torque_nm
     return (f'<position name="act_{joint_name}" joint="{joint_name}" '
-            f'kp="{A.JOINT_KP}" kv="{A.JOINT_KV}" ctrlrange="-6.3 6.3" forcelimited="false"/>')
+            f'kp="{A.JOINT_KP}" kv="{A.JOINT_KV}" ctrlrange="-6.3 6.3" '
+            f'forcelimited="true" forcerange="{-torque} {torque}"/>')
 
 
 def _arm_xml(side: str, geom: dict, z_offset: float) -> str:
@@ -124,9 +148,17 @@ def _leg_xml(side: str, geom: dict, z_offset: float) -> str:
 
 
 def _hold_geom_xml(name: str, pos, color: str, radius: float) -> str:
+    # contype/conaffinity 0: holds are rendered for visualization and give the connect
+    # constraint's anchor target its position, but must NOT rigid-body-collide with
+    # anything. The connect constraint pulls a hand/foot site to a hold's exact position,
+    # which would otherwise make the hand/hold collision geoms fully interpenetrate --
+    # producing a contact-repulsion force that fights the connect's attraction force.
+    # That conflict was the actual cause of the ~20 kN spurious "grip forces" seen on an
+    # otherwise motionless climber during development (see model.set_limb_gain docstring
+    # for a second, additive cause of the same symptom).
     x, y, z = pos
     return (f'<geom name="hold_{name}" type="sphere" pos="{x} {y} {z}" size="{radius}" '
-            f'rgba="{color}" contype="2" conaffinity="1"/>'
+            f'rgba="{color}" contype="0" conaffinity="0"/>'
             f'<site name="hsite_{name}" pos="{x} {y} {z}" size="0.005"/>')
 
 
@@ -146,6 +178,18 @@ def build_mjcf(route: Route, torso_start_pos=(0.0, 0.35, 1.55)) -> str:
         for h in route.holds.values()
     )
     x0, y0, z0 = torso_start_pos
+
+    xs = [h.pos[0] for h in route.holds.values()] + [x0]
+    zs = [h.pos[2] for h in route.holds.values()] + [z0 - 1.0, z0 + 0.5]
+    cx, cz = (min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2
+    span = max(max(xs) - min(xs), max(zs) - min(zs), 1.5)
+    cam_dist = span * 0.85 + 1.0
+    # xyaxes="-1 0 0  0 0 1": local x=world -x, local y=world +z (up) => the camera's
+    # view direction (-local z) works out to world -y, i.e. looking from in front of the
+    # climber straight at the wall, right-side-up. Framing follows the route's own hold
+    # bounding box so it works for any route without per-route camera tuning.
+    camera_xml = (f'<camera name="climb_cam" pos="{cx} {cam_dist} {cz}" '
+                  f'xyaxes="-1 0 0 0 0 1" fovy="55"/>')
 
     anchors_xml = "\n    ".join(
         f'<body name="anchor_{limb}" mocap="true" pos="0 0 0">'
@@ -167,15 +211,25 @@ def build_mjcf(route: Route, torso_start_pos=(0.0, 0.35, 1.55)) -> str:
   </default>
   <visual>
     <headlight ambient="0.4 0.4 0.4"/>
+    <global offwidth="1280" offheight="960"/>
   </visual>
   <asset>
     <texture type="skybox" builtin="gradient" rgb1="0.65 0.75 0.9" rgb2="1 1 1" width="128" height="128"/>
-    <texture name="wall_tex" type="2d" builtin="flat" rgb1="0.82 0.78 0.72" width="64" height="64"/>
-    <material name="wall_mat" texture="wall_tex" texrepeat="4 4"/>
+    <texture name="wall_tex" type="2d" builtin="checker" rgb1="0.55 0.52 0.48" rgb2="0.62 0.59 0.55"
+              width="128" height="128"/>
+    <material name="wall_mat" texture="wall_tex" texrepeat="10 10" reflectance="0.05"/>
   </asset>
   <worldbody>
     <light directional="true" pos="1 -2 3" dir="-0.3 0.6 -0.9" diffuse="0.8 0.8 0.8"/>
-    <geom name="wall" type="box" pos="0 {WALL_Y - 0.05} 2" size="3 0.05 3" material="wall_mat"/>
+    {camera_xml}
+    <!-- contype/conaffinity 0: the wall is a visual backdrop only. The climber's body-
+         to-wall clearance isn't modeled as rigid contact -- grip is entirely mediated by
+         the per-limb connect constraints -- and a foot/hand geom that ends up slightly
+         behind the wall face (its site is at the hold, not its own geometric center) would
+         otherwise generate large spurious contact forces, as the hold-vs-hand collision
+         did (see _hold_geom_xml). -->
+    <geom name="wall" type="box" pos="0 {WALL_Y - 0.05} 2" size="3 0.05 3" material="wall_mat"
+          contype="0" conaffinity="0"/>
     {holds_xml}
     {anchors_xml}
     <body name="torso" pos="{x0} {y0} {z0}">
@@ -259,6 +313,35 @@ class ClimberModel:
 
     def set_grip_active(self, limb: str, active: bool) -> None:
         self.data.eq_active[self.limb_eq_id[limb]] = active
+
+    def set_limb_gain(self, limb: str, kp: float, kv: float) -> None:
+        """Retune this limb's position-actuator stiffness at runtime.
+
+        Early in development, driving *every* limb's joints with a full-
+        stiffness PD target while their end-effectors also sat on a stiff
+        `equality/connect` grip constraint produced enormous (~20 kN),
+        spurious, self-cancelling internal forces on an otherwise motionless
+        climber. That turned out to be caused by an unrelated bug (hand/foot
+        collision geoms interpenetrating their hold geoms at the grip point,
+        (fixed in `_hold_geom_xml`) plus a genuinely inconsistent starting
+        pose (fixed by `solve_pose_ik`'s whole-body solve) -- not by
+        actuator/connect conflict per se. With both fixed, full-gain control
+        on every limb (anchored or moving) settles quickly to a stable,
+        realistic *engaged* posture (bent arms, torso close to the wall) --
+        which a low anchored-limb gain does not: it lets the climber sag
+        into a passive dead-hang instead, which both looks wrong and quietly
+        breaks reachability for the next move (the shoulder ends up much
+        lower, and further from the next hold, than an actively-climbing
+        body would be). Kept as a runtime knob because a future feature
+        (e.g. deliberately simulating a pumped/fatigued grip) may still want
+        it, but the pipeline currently always calls this with the same
+        (`A.JOINT_KP`, `A.JOINT_KV`) for anchored and moving limbs alike.
+        """
+        for jname in LIMB_JOINTS[limb]:
+            aid = self.model.actuator(f"act_{jname}").id
+            self.model.actuator_gainprm[aid, 0] = kp
+            self.model.actuator_biasprm[aid, 1] = -kp
+            self.model.actuator_biasprm[aid, 2] = -kv
 
     def limb_site_pos(self, limb: str) -> np.ndarray:
         return self.data.site_xpos[self.limb_site_id[limb]].copy()

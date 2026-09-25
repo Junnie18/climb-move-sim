@@ -1,0 +1,18 @@
+{
+  "name": "easy_ladder",
+  "holds": [
+    {"name": "lh0", "pos": [-0.22, 0.05, 1.55], "type": "jug"},
+    {"name": "rh0", "pos": [0.22, 0.05, 1.55], "type": "jug"},
+    {"name": "lf0", "pos": [-0.18, 0.05, 0.75], "type": "foothold"},
+    {"name": "rf0", "pos": [0.18, 0.05, 0.75], "type": "foothold"},
+    {"name": "lf1", "pos": [-0.15, 0.05, 1.05], "type": "foothold"},
+    {"name": "rf1", "pos": [0.15, 0.05, 1.05], "type": "foothold"},
+    {"name": "lh1", "pos": [-0.16, 0.05, 1.63], "type": "jug"},
+    {"name": "rh1", "pos": [0.08, 0.05, 1.62], "type": "crimp"}
+  ],
+  "start": {"left_hand": "lh0", "right_hand": "rh0", "left_foot": "lf0", "right_foot": "rf0"},
+  "moves": [
+    {"limb": "left_foot", "hold": "lf1"},
+    {"limb": "right_foot", "hold": "rf1"}
+  ]
+}
