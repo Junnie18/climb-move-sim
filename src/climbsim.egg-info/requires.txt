@@ -1,0 +1,4 @@
+mujoco>=3.5
+numpy
+imageio
+imageio-ffmpeg
