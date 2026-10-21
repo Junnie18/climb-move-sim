@@ -211,6 +211,103 @@ test('Run submits the edited sequence and shows its returned result', async () =
   assert.equal(app.get('run-simulation').disabled, false);
 });
 
+test('Test this pose tests the displayed final contacts without deleting the planned moves', async () => {
+  const app = boot({simulate: ({route}) => ({...fixture(), routeDefinition: route, outcomes: [{passed: true, phase: 'initialization', move: '(starting stance)'}]})});
+  await app.drag(app.handle('left_hand'), app.holdPoint('target_left'));
+  const before = app.store.route, revision = app.store.revision;
+  await app.get('test-pose').click();
+  const sent = JSON.parse(app.requests.find(request => request.url.endsWith('/api/simulate')).options.body).route;
+  assert.equal(sent.start.left_hand, 'target_left');
+  assert.deepEqual(sent.moves, []);
+  assert.deepEqual(app.store.route, before);
+  assert.equal(app.store.revision, revision);
+  assert.equal(app.replayLoads[0][0].checkType, 'pose');
+  assert.match(app.get('editor-verdict-title').textContent, /pose held/i);
+  assert.match(app.get('editor-status').textContent, /No moves were tested/i);
+});
+
+test('Test this pose follows start-pose editing instead of silently testing the queued end pose', async () => {
+  const app = boot();
+  await app.drag(app.handle('left_hand'), app.holdPoint('target_left'));
+  await app.get('mode-start').click();
+  await app.get('test-pose').click();
+  const sent = JSON.parse(app.requests.find(request => request.url.endsWith('/api/simulate')).options.body).route;
+  assert.deepEqual(sent.start, app.store.route.start);
+  assert.deepEqual(sent.moves, []);
+  assert.equal(app.store.route.moves.length, 1);
+});
+
+test('switching to the starting pose clears a final-pose verdict without changing the route', async () => {
+  const app = boot();
+  await app.drag(app.handle('left_hand'), app.holdPoint('target_left'));
+  await app.get('test-pose').click();
+  assert.match(app.get('editor-verdict-title').textContent, /Final pose/);
+  const before = app.store.route, revision = app.store.revision;
+  await app.get('back-to-editor').click();
+  await app.get('mode-start').click();
+  assert.equal(app.get('view-result').hidden, true);
+  assert.equal(app.get('replay-tab').disabled, true);
+  assert.doesNotMatch(app.get('editor-verdict-title').textContent, /held/i);
+  assert.deepEqual(app.store.route, before);
+  assert.equal(app.store.revision, revision);
+});
+
+test('switching pose scope during a pose run discards its result even without a route edit', async () => {
+  let resolve;
+  const response = new Promise(done => { resolve = done; });
+  const app = boot({simulate: () => response});
+  await app.drag(app.handle('left_hand'), app.holdPoint('target_left'));
+  const revision = app.store.revision, run = app.get('test-pose').click();
+  await app.get('mode-start').click();
+  resolve(fixture()); await run;
+  assert.equal(app.replayLoads.length, 0);
+  assert.equal(app.store.revision, revision);
+  assert.equal(app.get('replay-tab').disabled, true);
+});
+
+test('switching pose scope during a move run keeps that run active even after an earlier pose result', async () => {
+  let resolve, calls = 0;
+  const response = new Promise(done => { resolve = done; });
+  const app = boot({simulate: () => ++calls === 1 ? fixture() : response});
+  await app.drag(app.handle('left_hand'), app.holdPoint('target_left'));
+  await app.get('test-pose').click();
+  await app.get('back-to-editor').click();
+  const run = app.get('run-simulation').click();
+  await app.get('mode-start').click();
+  assert.equal(app.get('editor-verdict').classList.contains('running'), true);
+  assert.doesNotMatch(app.get('editor-status').textContent, /discard/i);
+  resolve(fixture()); await run;
+  assert.equal(app.replayLoads.length, 2);
+  assert.equal(app.replayLoads[1][0].checkType, 'moves');
+  assert.match(app.get('editor-verdict-title').textContent, /completed your moves/i);
+});
+
+test('a pose check disables both run actions and discards results after a new edit', async () => {
+  let resolve;
+  const response = new Promise(done => { resolve = done; });
+  const app = boot({simulate: () => response});
+  const run = app.get('test-pose').click();
+  assert.equal(app.get('test-pose').disabled, true);
+  assert.equal(app.get('run-simulation').disabled, true);
+  await app.drag(app.handle('left_hand'), app.holdPoint('target_left'));
+  resolve(fixture()); await run;
+  assert.equal(app.replayLoads.length, 0);
+  assert.equal(app.store.route.moves.length, 1);
+  assert.equal(app.get('test-pose').disabled, false);
+  assert.equal(app.get('run-simulation').disabled, false);
+});
+
+test('pose replay labels support checking separately from a successful move sequence', () => {
+  const app = boot({viewer: true}), pose = fixture();
+  pose.checkType = 'pose'; pose.routeDefinition.moves = [];
+  pose.outcomes = [{passed: true, phase: 'initialization', move: '(starting stance)'}];
+  app.window.ClimbReplay.loadTrajectory(pose);
+  assert.match(app.get('replay-result-context').textContent, /POSE SUPPORT CHECK/);
+  assert.match(app.get('replay-result-title').textContent, /pose held/i);
+  assert.match(app.get('replay-result-text').textContent, /No moves were tested/);
+  assert.equal(Number(app.get('timeline').value), 0, 'A pose check should replay the full settling test instead of skipping nearly all of it');
+});
+
 test('Run an example submits one move, and Reset restores an empty sequence', async () => {
   const app = boot();
   await app.get('run-example').click();
