@@ -55,13 +55,13 @@
     state.demo = state.demos[index]; if (!state.demo) return;
     state.time = 0; state.playing = false; state.index = 0; uiIndex = -1; state.peak = 0;
     const d = state.demo;
-    $('replay-origin').textContent = d.freshRun ? 'FRESH MUJOCO RUN' : 'RECORDED EXAMPLE';
+    $('replay-origin').textContent = d.freshRun ? (d.currentDraft ? 'YOUR CURRENT ROUTE' : 'PREVIOUS ROUTE VERSION') : 'RECORDED EXAMPLE';
     $('route-select').value = String(index);
     $('timeline').max = String(duration()); $('timeline').value = '0';
     ['play', 'restart', 'timeline'].forEach(id => $(id).disabled = !d.frames.length);
     $('scene-message').hidden = Boolean(d.frames.length);
     if (!d.frames.length) $('scene-message').replaceChildren(make('strong', '', 'No motion was recorded.'), make('p', '', 'The starting pose could not be established. See the attempt diagnostic below, then adjust the route in the editor.'));
-    $('result-badge').textContent = d.success ? 'CONTROLLER COMPLETED' : 'NOT COMPLETED';
+    $('result-badge').textContent = d.freshRun && !d.currentDraft ? 'PREVIOUS ROUTE VERSION' : d.success ? 'COMPLETED IN MODEL' : 'ATTEMPT STOPPED';
     $('result-badge').classList.toggle('failed', !d.success);
     const metadata = d.metadata || d;
     const mass = d.massKg ?? metadata.massKg, step = d.timestep ?? metadata.timestep;
@@ -73,18 +73,22 @@
     // Open on a real supported stance after initial settling. Restart still begins at t=0.
     const preview = d.frames.filter(f => f.t <= 2.8 && f.grips?.every(Boolean) && (f.moveIndex < 0 || /^initial/.test(f.phase || ''))).at(-1);
     if (preview) { state.time = preview.t; state.index = G.frameIndex(d.frames, state.time); }
-    updateUI(); dirty = true;
+    if (d.freshRun && d.autoplay && d.frames.length) {
+      const transition = d.frames.find(f => f.moveIndex >= 0 && /dynamic|transition/.test(f.phase || ''));
+      state.time = transition ? transition.t : Math.min(2.8, duration());
+      state.index = G.frameIndex(d.frames, state.time); state.playing = state.time < duration(); state.last = null;
+    }
+    updateUI(); dirty = true; renderNow();
   }
 
   function renderVerdict() {
     const d = state.demo, failure = d.outcomes.find(o => !o.passed);
+    const explanation = window.ClimbEditorState.describeResult(d);
+    $('replay-result-card').className = `replay-result-card ${explanation.kind}`;
+    $('replay-result-context').textContent = d.freshRun ? (d.currentDraft ? 'RESULT FOR YOUR CURRENT ROUTE' : 'OLDER RESULT · YOUR WALL HAS CHANGED') : 'RECORDED EXAMPLE · NOT YOUR EDITED WALL';
+    $('replay-result-title').textContent = explanation.title; $('replay-result-text').textContent = explanation.text;
     const reason = failure?.reason || '';
-    let title, description;
-    if (d.success) { title = 'Model/controller completed.'; description = 'This attempt passed its reachability, transition, and settle checks within the simplified model and configured grip limits. Wall clearance is reported separately.'; }
-    else if (failure?.phase === 'reachability') { title = failure.detail?.category === 'geometric_reach_limit' ? 'Beyond the current reach.' : 'No target pose found.'; description = 'The reachability check rejected the target from the current stance. This controlled attempt stopped before that transition.'; }
-    else if (failure?.phase === 'initialization') { title = 'The starting stance fails.'; description = 'The model could not establish a valid starting configuration. The exact initialization diagnostic is recorded below.'; }
-    else if (/grip|friction|force|cone|overload|strength/i.test(reason)) { title = 'A grip reaches its limit.'; description = 'A recorded grip load violated a configured force rating or friction constraint. Inspect the force history and exact diagnostic.'; }
-    else { title = 'The controller stops here.'; description = 'The controlled transition did not pass. A controller or planning failure does not establish that the move is physically impossible.'; }
+    const {title, text: description} = explanation;
     $('verdict-title').textContent = title; $('verdict-description').textContent = description;
     $('failure-detail').hidden = !failure;
     if (failure) {
@@ -112,7 +116,7 @@
     const minX = Math.min(...xs) - .25, maxX = Math.max(...xs) + .25, minZ = Math.min(...zs) - .25, maxZ = Math.max(...zs) + .32;
     camera.target = [(minX + maxX) / 2, .14, (minZ + maxZ) / 2];
     camera.spanX = Math.max(maxX - minX, 1.6); camera.spanZ = Math.max(maxZ - minZ, 1.9);
-    updateCameraButtons(); dirty = true;
+    updateCameraButtons(); dirty = true; renderNow();
   }
 
   function updateCameraButtons() {
@@ -261,7 +265,7 @@
   }
 
   function renderScene() {
-    if (!state.demo) return;
+    if (!state.demo || width <= 80 || height <= 94) return;
     camera.azimuth = state.azimuth; camera.elevation = state.elevation;
     camera.scale = Math.min((width - 80) / camera.spanX, (height - 94) / camera.spanZ) * state.zoom;
     ctx.clearRect(0, 0, width, height); ctx.fillStyle = '#eeeee5'; ctx.fillRect(0, 0, width, height);
@@ -274,7 +278,7 @@
   }
 
   function renderPlot() {
-    if (!state.demo) return;
+    if (!state.demo || plotWidth <= 30 || plotHeight <= 10) return;
     pctx.clearRect(0, 0, plotWidth, plotHeight);
     const left = 25, right = plotWidth - 2, top = 5, bottom = plotHeight - 5, max = Math.max(1.15, state.peak * 1.13), end = duration() || 1;
     const x = t => left + t / end * (right - left), y = n => bottom - n / max * (bottom - top);
@@ -288,7 +292,9 @@
     pctx.beginPath(); pctx.moveTo(x(state.time), top); pctx.lineTo(x(state.time), bottom); pctx.strokeStyle = '#ecedda70'; pctx.lineWidth = .7; pctx.stroke(); pctx.textAlign = 'left';
   }
 
-  function setTime(time) { if (!state.demo?.frames.length) return; state.time = Math.max(0, Math.min(duration(), time)); state.index = G.frameIndex(state.demo.frames, state.time); updateUI(); dirty = true; }
+  // First paint must not depend on RAF: hidden/background tabs may throttle it.
+  function renderNow() { if (!state.demo) return; renderScene(); renderPlot(); dirty = false; }
+  function setTime(time) { if (!state.demo?.frames.length) return; state.time = Math.max(0, Math.min(duration(), time)); state.index = G.frameIndex(state.demo.frames, state.time); updateUI(); dirty = true; renderNow(); }
   function togglePlayback() { if (!state.demo?.frames.length) return; if (state.time >= duration()) setTime(0); state.playing = !state.playing; state.last = null; updateUI(); }
   function tick(now) {
     if (state.playing && state.demo) {
@@ -296,7 +302,7 @@
       if (state.time >= duration()) { state.playing = false; updateUI(); }
     }
     state.last = now;
-    if (dirty) { renderScene(); renderPlot(); dirty = false; }
+    if (dirty) renderNow();
     requestAnimationFrame(tick);
   }
 
@@ -322,16 +328,17 @@
     catch (error) { $('import-status').textContent = error.message; }
     e.target.value = '';
   });
-  function resize() { [width, height] = fitCanvas(canvas, ctx); [plotWidth, plotHeight] = fitCanvas(plot, pctx); dirty = true; }
+  function resize() { [width, height] = fitCanvas(canvas, ctx); [plotWidth, plotHeight] = fitCanvas(plot, pctx); dirty = true; renderNow(); }
   window.ClimbReplay = {
-    loadTrajectory(data) {
-      const demo = {...normalizeDemo(data), freshRun: true}; state.demos.push(demo);
+    loadTrajectory(data, {autoplay = true} = {}) {
+      state.demos.forEach(d => { d.currentDraft = false; });
+      const demo = {...normalizeDemo(data), freshRun: true, currentDraft: true, autoplay}; state.demos.push(demo);
       const option = make('option', '', `${human(demo.route)} · edited run`); option.value = String(state.demos.length - 1); $('route-select').append(option);
       selectDemo(state.demos.length - 1); return demo;
     },
     pause() { state.playing = false; updateUI(); },
     resize,
-    invalidate() { state.playing = false; $('result-badge').textContent = 'PREVIOUS RUN · ROUTE EDITED'; $('result-badge').classList.add('failed'); }
+    invalidate() { state.playing = false; state.demos.forEach(d => { d.currentDraft = false; }); $('result-badge').textContent = 'PREVIOUS RUN · ROUTE EDITED'; $('result-badge').classList.add('failed'); if (state.demo) renderVerdict(); }
   };
   new ResizeObserver(resize).observe($('viewport')); new ResizeObserver(resize).observe(plot.parentElement);
   try {

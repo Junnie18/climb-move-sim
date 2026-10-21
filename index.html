@@ -10,43 +10,44 @@
   <link rel="stylesheet" href="style.css">
   <script defer src="data.js"></script>
   <script defer src="geometry.js"></script>
-  <script defer src="viewer.js"></script>
   <script defer src="editor-state.js"></script>
+  <script defer src="viewer.js"></script>
   <script defer src="editor.js"></script>
 </head>
 <body>
   <header class="masthead">
     <a class="brand" href="#" aria-label="Ascent home"><svg width="29" height="29" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 27 15.8 4 29 27M9 17h14" fill="none" stroke="currentColor" stroke-width="2.4"/></svg><span>ASCENT<span class="brand-rule">/</span><span class="brand-sub">MECHANICS LAB</span></span></a>
-    <div class="mast-meta"><span class="status-dot"></span> CLIMBING PHYSICS WORKBENCH <span class="version">02</span></div>
+    <div class="mast-meta">Build a route. Test a move.</div>
   </header>
   <main>
-    <section class="intro" aria-labelledby="page-title">
-      <div><div class="eyebrow">COMPUTATIONAL CLIMBING · INTERACTIVE LAB</div><h1 id="page-title">Every move has <em>its limits.</em></h1><p>Build a route. Place the climber. Find out what the model can do.</p></div>
-      <div class="intro-note"><span class="small-cross">+</span><p>Your route. A fresh simulation.<br><span>Free-floating body · torque-limited joints<br>Per-hold grip and friction constraints</span></p></div>
-    </section>
-
-    <nav class="lab-tabs" aria-label="Workbench view"><button id="editor-tab" class="active" aria-pressed="true" aria-controls="editor-stage">Route editor <span>01</span></button><button id="replay-tab" aria-pressed="false" aria-controls="replay-stage">Simulation replay <span>02</span></button><span class="tab-note">DESIGN → SIMULATE → INSPECT</span></nav>
+    <div class="workbench-heading"><div><h1 id="page-title">Try the next move.</h1><p>Drag a hand or foot to a hold. Move the holds to change the challenge.</p></div><nav class="lab-tabs" aria-label="Workbench view"><button id="editor-tab" class="active" aria-pressed="true" aria-controls="editor-stage">Edit wall</button><button id="replay-tab" aria-pressed="false" aria-controls="replay-stage" disabled>Watch result</button></nav></div>
     <section id="editor-stage" class="editor-workspace" aria-label="Interactive climbing route editor">
-      <div class="editor-topbar"><div class="editor-template"><label for="editor-template">START WITH</label><select id="editor-template" aria-label="Choose route template"></select></div><div class="editor-top-actions"><button id="editor-undo" title="Undo the last route edit" disabled>Undo</button><button id="editor-reset">Reset route</button><button id="editor-import">Import route</button><input id="editor-import-file" type="file" accept=".json,application/json" hidden><button id="editor-export">Export JSON</button></div></div>
       <div class="editor-grid">
         <div class="planner-panel">
-          <div class="planner-toolbar"><div class="segmented" role="group" aria-label="Dragging tool"><button id="tool-holds" class="active" aria-pressed="true">Move holds</button><button id="tool-limbs" aria-pressed="false">Place limbs</button></div><button id="add-hold" class="quiet-button">+ Add hold</button><button id="planner-fit" class="quiet-button" title="Fit all holds into view">Fit view</button></div>
-          <div class="planner-viewport"><canvas id="planner" tabindex="0" aria-label="Front-view route planner. Drag holds to reposition them. In Place limbs mode, drag a labeled hand or foot onto a hold. Keyboard controls are in the route inspector."></canvas><div class="planner-caption"><span class="recording-mark"><i></i> FRONT VIEW · PLANNING ONLY</span><span id="planner-scale">0.25 m GRID</span></div><div id="planner-context" class="planner-context">Drag a hold to reshape the route.</div><div class="planner-bottom"><label><input id="snap-grid" type="checkbox" checked> Snap to 1 cm</label><span>SCROLL TO ZOOM · DRAG TO PAN EMPTY SPACE</span></div></div>
-          <div class="planner-scope"><span class="tiny-square"></span> The figure shows your planned contacts. Run the simulation to calculate motion and forces.</div>
+          <div class="planner-toolbar"><strong>Your wall</strong><button id="editor-undo" class="quiet-button" title="Undo the last route edit" disabled>Undo</button><button id="editor-reset" class="quiet-button">Reset</button><button id="add-hold" class="quiet-button">Add hold</button><button id="planner-fit" class="quiet-button" title="Fit all holds into view">Fit view</button></div>
+          <div class="planner-viewport"><canvas id="planner" tabindex="0" aria-label="Drag the labeled hands and feet onto a numbered hold to add a move. Drag a hold to reposition it. Use the sidebar controls as a keyboard alternative."></canvas><div class="planner-caption"><span class="recording-mark"><i></i> PLANNED CONTACTS</span><span id="planner-scale">0.25 m GRID</span></div><div id="planner-context" class="planner-context">Drag the left hand to hold 1 to try a reach.</div><div class="planner-bottom"><label><input id="snap-grid" type="checkbox" checked> Snap to 1 cm</label><span>Scroll to zoom · Drag empty space to pan</span></div></div>
+          <div id="preview-status" class="planner-scope" role="status">Loading the body pose. Contact markers remain draggable.</div>
         </div>
         <aside class="route-inspector" aria-label="Route and limb controls">
-          <div class="inspector-heading"><span class="eyebrow">YOUR EXPERIMENT</span><span id="edit-revision">DRAFT 01</span></div>
-          <label class="field-label" for="editor-name">Route name</label><input id="editor-name" class="full-input" maxlength="80" autocomplete="off">
-          <div class="inspector-section"><div class="section-title"><h2>Place the climber</h2><span id="assignment-count">4 CONTACTS</span></div><div class="segmented assignment-mode" role="group" aria-label="Limb assignment mode"><button id="mode-start" class="active" aria-pressed="true">Start pose</button><button id="mode-moves" aria-pressed="false">Add move</button></div><p id="assignment-help" class="inspector-hint">Drag a limb handle onto a hold to set its starting contact.</p><div id="limb-controls" class="limb-controls"></div><div class="assignment-action"><select id="assignment-target" aria-label="Target hold for selected limb"></select><button id="assign-limb">Set contact</button></div></div>
-          <div class="inspector-section hold-inspector"><div class="section-title"><h2>Hold properties</h2><button id="delete-hold" class="text-button">Remove</button></div><label class="sr-only" for="selected-hold">Selected hold</label><select id="selected-hold" class="full-input"></select><div class="coordinate-fields"><label>X <input id="hold-x" type="number" step=".01" min="-3" max="3"></label><label>Height <input id="hold-z" type="number" step=".01" min=".05" max="5"></label><span>m</span></div><div class="property-fields"><label>Type<select id="hold-type"><option value="jug">Jug</option><option value="crimp">Crimp</option><option value="sloper">Sloper</option><option value="foothold">Foothold</option></select></label><label>Grip cap · N<input id="hold-cap" type="number" step="10" min="1" max="10000"></label><label>Friction · μ<input id="hold-friction" type="number" step=".05" min=".01" max="4"></label></div></div>
-          <div class="inspector-section move-section"><div class="section-title"><h2>Move sequence <span id="move-count">0</span></h2><button id="clear-moves" class="text-button">Clear</button></div><ol id="move-list" class="move-list"></ol><p id="empty-moves" class="inspector-hint">No moves yet. Switch to Add move and drag a limb to a new hold. You can also test the starting stance on its own.</p></div>
+          <div class="inspector-heading"><span class="eyebrow">PLAN A MOVE</span><span id="edit-revision">DRAFT 01</span></div>
+          <h2 class="instruction-title">Where should the climber go?</h2><p id="assignment-help" class="inspector-hint">Drag a hand or foot onto a hold. Each drop adds one move.</p>
+          <button id="run-example" class="example-button">Show me a 20 cm reach</button>
+          <div class="inspector-section move-section"><div class="section-title"><h2>Your moves <span id="move-count">0</span></h2><button id="clear-moves" class="text-button">Clear</button></div><ol id="move-list" class="move-list"></ol><p id="empty-moves" class="inspector-hint">No moves yet. Start by dragging the left hand to hold 1.</p></div>
+          <div class="run-panel"><div id="editor-verdict" class="editor-verdict" role="status" aria-live="polite"><span class="verdict-dot"></span><div><strong id="editor-verdict-title">Ready when you are</strong><p id="editor-status">Add a move, or test the starting stance.</p></div></div><button id="run-simulation" class="run-button"><span>Test starting stance</span><span class="run-engine">MUJOCO</span></button><button id="view-result" class="quiet-button" hidden>Watch this result</button></div>
+          <details class="advanced-settings"><summary>Advanced settings</summary>
+            <label class="field-label" for="editor-name">Route name</label><input id="editor-name" class="full-input" maxlength="80" autocomplete="off">
+            <div class="editor-template"><label for="editor-template">Load route</label><select id="editor-template" aria-label="Choose route template"></select></div>
+            <div class="inspector-section"><div class="section-title"><h2>Contacts</h2><span id="assignment-count">4 CONTACTS</span></div><div class="segmented assignment-mode" role="group" aria-label="Limb assignment mode"><button id="mode-moves" class="active" aria-pressed="true">Add moves</button><button id="mode-start" aria-pressed="false">Edit start pose</button></div><div id="limb-controls" class="limb-controls"></div><div class="assignment-action"><select id="assignment-target" aria-label="Target hold for selected limb"></select><button id="assign-limb">Add move</button></div><div hidden><button id="tool-holds">Move holds</button><button id="tool-limbs">Place limbs</button></div></div>
+            <div class="inspector-section hold-inspector"><div class="section-title"><h2>Selected hold</h2><button id="delete-hold" class="text-button">Remove</button></div><label class="sr-only" for="selected-hold">Selected hold</label><select id="selected-hold" class="full-input"></select><div class="coordinate-fields"><label>X <input id="hold-x" type="number" step=".01" min="-3" max="3"></label><label>Height <input id="hold-z" type="number" step=".01" min=".05" max="5"></label><span>m</span></div><div class="property-fields"><label>Type<select id="hold-type"><option value="jug">Jug</option><option value="crimp">Crimp</option><option value="sloper">Sloper</option><option value="foothold">Foothold</option></select></label><label>Grip cap · N<input id="hold-cap" type="number" step="10" min="1" max="10000"></label><label>Friction · μ<input id="hold-friction" type="number" step=".05" min="0" max="4"></label></div></div>
+            <div class="editor-top-actions"><button id="editor-import">Import route</button><input id="editor-import-file" type="file" accept=".json,application/json" hidden><button id="editor-export">Export route</button></div>
+          </details>
         </aside>
       </div>
-      <div class="run-panel"><div id="editor-verdict" class="editor-verdict" role="status" aria-live="polite"><span class="verdict-dot"></span><div><strong id="editor-verdict-title">Ready to test your route</strong><p id="editor-status">Every run uses your current holds, starting contacts and move sequence.</p></div></div><button id="run-simulation" class="run-button"><span>Run simulation</span><span class="run-engine">MUJOCO</span></button><button id="view-result" class="quiet-button" hidden>View replay</button></div>
       <div class="editor-footnote"><span>Model feasibility only. A failed controller attempt does not prove a human move is impossible. Body–wall collision response is not modeled.</span><details class="connection-settings"><summary><span id="connection-label">Simulator connection</span></summary><div class="connection-popover"><label for="simulator-url">Simulator URL</label><input id="simulator-url" type="url" placeholder="Same origin, or https://your-simulator…"><button id="save-connection">Connect</button><p id="connection-status" role="status">The local app connects automatically. A hosted copy needs a running Python simulator.</p><a href="https://github.com/Junnie18/climb-move-sim#interactive-route-editor" target="_blank" rel="noopener">Local setup instructions</a></div></details></div>
     </section>
 
     <div id="replay-stage" hidden>
+    <div id="replay-result-card" class="replay-result-card" role="status"><div><span id="replay-result-context" class="eyebrow">SIMULATION RESULT</span><h2 id="replay-result-title">Your result</h2><p id="replay-result-text"></p></div><button id="back-to-editor" class="quiet-button">Back to edit</button></div>
     <div class="workspace">
       <section class="scene-panel" aria-label="Climbing trajectory playback">
         <div class="scene-toolbar">
@@ -74,7 +75,7 @@
 
       <aside class="telemetry" aria-label="Recorded force telemetry">
         <div class="panel-heading"><span class="eyebrow">LIVE AT PLAYHEAD</span><span class="live-indicator"></span></div>
-        <h2>The cost of holding on.</h2><p class="panel-description">Solver constraint loads at each grip.</p>
+        <h2>Grip forces</h2><p class="panel-description">Calculated load at each hand and foot.</p>
         <div id="grip-readouts" class="grip-readouts"></div>
         <div class="plot-header"><h3>Grip load history</h3><span>FORCE / RATED CAP</span></div>
         <div class="plot-wrap"><canvas id="force-plot" aria-label="Per-limb force as a percentage of its hold's rated force cap across the recorded trajectory"></canvas></div>
