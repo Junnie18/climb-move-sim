@@ -1,25 +1,9 @@
-"""Runs a full route attempt move-by-move and decides, for each move, whether
-it's physically feasible -- the core of the project.
+"""Forward-dynamics route attempts with explicit contact and failure checks.
 
-Per move, in order:
-  1. Kinematic reachability: is the target hold within the moving limb's
-     geometric reach at all (hard bound), and does numerical IK (holding
-     torso + the other three limbs at their current, already-settled
-     configuration) actually find a joint solution that reaches it?
-  2. Forward-dynamics simulation of the transition: the target limb detaches
-     (its grip constraint switches off) and is driven toward the IK
-     solution by its PD position actuators while the other three limbs stay
-     passively anchored; gravity acts throughout. Every step, each still-
-     anchored limb's real constraint force (see forces.py) is checked
-     against its hold's friction cone and max-grip rating.
-  3. Settle: once the moving limb's new grip constraint activates, run a
-     short settle window and re-check all four grips -- this is the static
-     (steady-state) equilibrium check, done via genuine forward dynamics
-     rather than a separate analytic solve.
-
-Any friction-cone or max-grip violation, at any point, fails the move and
-(for the route as a whole) triggers an unconstrained fall for however long
-the caller wants to keep rendering.
+The controller is a bounded joint-position tracker, not a proof of human
+climbability. Geometric bounds, numerical planning failures, tracking failures,
+and contact overloads are reported separately. No IK result is applied to live
+positions during a move, and no grip is attached before the limb arrives.
 """
 
 from dataclasses import dataclass, field
@@ -29,24 +13,22 @@ import mujoco
 import numpy as np
 
 from climbsim import anthropometry as A
-from climbsim.forces import check_grip
+from climbsim.forces import check_grip, FRICTION_GATED_TYPES
 from climbsim.kinematics import solve_ik_best, solve_pose_ik
 from climbsim.model import ClimberModel, LIMB_JOINTS, arm_reach, leg_reach
 from climbsim.route import LIMBS, Move, Route
 
-DT = 0.002
-INITIAL_SETTLE_S = 3.0  # let the climber fall from the (somewhat arbitrary) starting
-# pose guess into its true, physically-consistent resting stance before any move is
-# attempted. This transient is genuinely large -- during development, the torso dropped
-# ~1 m and briefly exceeded 10 rad/s of joint velocity before settling -- because whole-
-# body IK (solve_pose_ik) only guarantees the four limb sites reach their holds, not that
-# the resulting pose is close to the low-energy natural hang. Starting a move mid-transient
-# (the original 0.4s here) fed a moving limb's already-swinging anchor state into the
-# per-step grip check and produced spurious multi-kN "slip" failures on a route that is
-# in fact easily climbable.
+DT = 0.002  # compatibility default; simulation loops use model.opt.timestep
+INITIAL_SETTLE_S = 3.0
 TRANSITION_S = 3.0
 SETTLE_S = 3.0
-REACH_TOL = 0.02
+REACH_TOL = 0.002
+INITIAL_POSE_TOL = 0.0001
+CONTACT_DISTANCE_M = 0.012
+CONTACT_SPEED_M_S = 0.12
+REPLAN_S = 0.1
+COMMAND_SPEED_RAD_S = 1.2
+COMMAND_ACCEL_RAD_S2 = 4.0
 
 
 def _max_reach(limb: str) -> float:
@@ -55,9 +37,9 @@ def _max_reach(limb: str) -> float:
 
 @dataclass
 class MoveOutcome:
-    move: Move
+    move: Optional[Move]
     passed: bool
-    phase: str  # "reachability" | "dynamic" | "settle"
+    phase: str
     reason: str
     detail: dict = field(default_factory=dict)
 
@@ -71,38 +53,36 @@ class AttemptResult:
 
     @property
     def success(self) -> bool:
-        return len(self.outcomes) > 0 and all(o.passed for o in self.outcomes) and not self.fell
+        return len(self.outcomes) == len(self.route.moves) and bool(self.outcomes) and all(
+            o.passed for o in self.outcomes) and not self.fell
 
     @property
     def first_failure(self) -> Optional[MoveOutcome]:
-        for o in self.outcomes:
-            if not o.passed:
-                return o
-        return None
+        return next((o for o in self.outcomes if not o.passed), None)
 
 
 def _check_all_anchored(cm: ClimberModel, current_holds: dict, exclude=()) -> Optional[MoveOutcome]:
     for limb, hold_name in current_holds.items():
-        if limb in exclude or hold_name is None:
+        if limb in exclude or hold_name is None or not cm.data.eq_active[cm.limb_eq_id[limb]]:
             continue
         hold = cm.route.hold(hold_name)
         gc = check_grip(limb, hold, cm.model, cm.data, cm.limb_eq_id[limb])
         if not gc.ok:
-            reason = ("max grip force exceeded" if not gc.within_max_grip else "hold slipped (friction cone exceeded)")
+            category = "grip_strength_exceeded" if not gc.within_max_grip else "contact_cone_exceeded"
+            reason = "max grip force exceeded" if not gc.within_max_grip else "hold slipped (contact cone exceeded)"
             return MoveOutcome(
                 move=None, passed=False, phase="dynamic",
                 reason=f"{reason} on {limb} at hold '{hold_name}'",
-                detail=dict(limb=limb, hold=hold_name, force_n=float(np.linalg.norm(gc.force)),
-                            normal_n=gc.normal_n, tangential_n=gc.tangential_n),
+                detail=dict(category=category, limb=limb, hold=hold_name,
+                            force_n=float(np.linalg.norm(gc.force)), normal_n=gc.normal_n,
+                            tangential_n=gc.tangential_n, time_s=float(cm.data.time)),
             )
     return None
 
 
 def _set_ctrl_from_qpos(cm: ClimberModel, limb: str) -> None:
     for j in LIMB_JOINTS[limb]:
-        qadr = cm.model.joint(j).qposadr[0]
-        aid = cm.model.actuator(f"act_{j}").id
-        cm.data.ctrl[aid] = cm.data.qpos[qadr]
+        cm.data.ctrl[cm.model.actuator(f"act_{j}").id] = cm.data.qpos[cm.model.joint(j).qposadr[0]]
 
 
 def _capture(cm: ClimberModel, renderer_factory) -> Optional[np.ndarray]:
@@ -113,189 +93,329 @@ def _capture(cm: ClimberModel, renderer_factory) -> Optional[np.ndarray]:
     return r.render()
 
 
-def attempt_route(route: Route, renderer=None, frame_every: int = 15) -> AttemptResult:
-    """`renderer`, if given, is a `render.make_renderer()` factory (not a bound
-    mujoco.Renderer -- this function builds its own ClimberModel internally,
-    so the renderer is bound to that model lazily, on first frame capture)."""
-    cm = ClimberModel.build(route)
-    cm.init_qpos_standing()
+def _contact_state(cm: ClimberModel, limb: str, target_pos) -> tuple[float, float]:
+    """Distance and world-relative site speed against a stationary hold."""
+    mujoco.mj_kinematics(cm.model, cm.data)
+    mujoco.mj_comPos(cm.model, cm.data)
+    jac = np.zeros((3, cm.model.nv))
+    mujoco.mj_jacSite(cm.model, cm.data, jac, None, cm.limb_site_id[limb])
+    return (float(np.linalg.norm(cm.limb_site_pos(limb) - target_pos)),
+            float(np.linalg.norm(jac @ cm.data.qvel)))
 
+
+def _limb_base_pos(cm: ClimberModel, limb: str) -> np.ndarray:
+    side = "L" if limb.startswith("left") else "R"
+    body = ("upper_arm_" if "hand" in limb else "thigh_") + side
+    return cm.data.xpos[cm.model.body(body).id].copy()
+
+
+
+def _support_torques(cm: ClimberModel, current_holds: dict) -> np.ndarray:
+    """Inverse-statics feedforward through the existing capped actuators.
+
+    Alternate projection approximately allocates forces balancing the floating base's
+    gravity wrench within conservative cones/caps. These are controller targets;
+    only MuJoCo's actual forces determine acceptance. No external body force is
+    applied, and no contact constraint is added by this controller.
+    """
+    contacts = [(limb, cm.route.hold(name)) for limb, name in current_holds.items()
+                if name is not None and cm.data.eq_active[cm.limb_eq_id[limb]]]
+    if not contacts:
+        return cm.data.qfrc_bias.copy()
+    jacobians = []
+    for limb, _ in contacts:
+        jac = np.zeros((3, cm.model.nv))
+        mujoco.mj_jacSite(cm.model, cm.data, jac, None, cm.limb_site_id[limb])
+        jacobians.append(jac)
+    J = np.vstack(jacobians)
+    base_map = J[:, :6].T
+    target = cm.data.qfrc_bias[:6]
+    inverse = np.linalg.pinv(base_map)
+    forces = inverse @ target
+    for projection_step in range(120):
+        for index, (limb, hold) in enumerate(contacts):
+            f = forces[3 * index:3 * index + 3]
+            if limb.endswith("_foot") or hold.type in FRICTION_GATED_TYPES:
+                normal = np.asarray(hold.normal)
+                n = float(f @ normal)
+                tangent = f - n * normal
+                t = float(np.linalg.norm(tangent))
+                mu = hold.friction * 0.75  # controller reserve; physical limit stays unchanged
+                if t > mu * n or n < 0:
+                    projected_n = max(0.0, (n + mu * t) / (1 + mu * mu))
+                    f[:] = projected_n * normal + tangent * (mu * projected_n / max(t, 1e-15))
+            magnitude = float(np.linalg.norm(f))
+            if magnitude > 0.85 * hold.max_grip_n:
+                f *= 0.85 * hold.max_grip_n / magnitude
+        error = target - base_map @ forces
+        if np.linalg.norm(error) < 1e-5:
+            break
+        if projection_step < 119:
+            forces += inverse @ error
+    # Finish on the cone/cap projection. If allocation cannot balance the
+    # base, its residual is left on the unactuated root, never injected as
+    # an external force. Real dynamics decides whether the stance survives.
+    return cm.data.qfrc_bias - J.T @ forces
+
+def attempt_route(route: Route, renderer=None, frame_every: int = 15, *,
+                  timestep: float = 0.002, observer=None, integration_observer=None) -> AttemptResult:
+    """Run one attempt. ``observer(cm, phase, move_index, current_holds)`` sees
+    every integrated step, plus initialization/terminal states. Observers must
+    treat the model/data as read-only. ``None`` denotes a detached limb.
+
+    A failed controller/IK attempt is not a certificate of physical impossibility.
+    Time windows use the compiled model timestep, including non-default values.
+    ``integration_observer`` has the same signature, but sees the reaction forces
+    actually used by mj_step before derived position caches are refreshed; it is
+    intended for force/torque telemetry, not rendering.
+    """
+    if not isinstance(frame_every, int) or frame_every <= 0:
+        raise ValueError("frame_every must be a positive integer")
+    cm = ClimberModel.build(route, timestep=timestep)
+    cm.init_qpos_standing()
+    # The joint axes use the same sign on both sides. Mirror the lateral
+    # seed angles so symmetric holds do not create an arbitrary sideways lean.
+    for joint in ("shoulder_abd_R", "hip_abd_R"):
+        adr = cm.model.joint(joint).qposadr[0]
+        cm.data.qpos[adr] *= -1
+    dt = float(cm.model.opt.timestep)
     current_holds = dict(route.start)
+    result = AttemptResult(route=route)
+    step_count = 0
+    joint_ids = cm.model.actuator_trnid[:, 0]
+    actuator_qadr = cm.model.jnt_qposadr[joint_ids]
+    actuator_dofs = cm.model.jnt_dofadr[joint_ids]
+    posture_targets = cm.data.qpos[actuator_qadr].copy()
+
+    def apply_controls():
+        compensation = _support_torques(cm, current_holds)
+        cm.data.ctrl[:] = posture_targets + compensation[actuator_dofs] / A.JOINT_KP
+
+    def emit(phase, move_index, force_capture=False):
+        if observer is not None:
+            observer(cm, phase, move_index, dict(current_holds))
+        if numerical_failure(phase) is not None:
+            return
+        if renderer is not None and (force_capture or step_count % frame_every == 0):
+            result.frames.append(_capture(cm, renderer))
+
+    def numerical_failure(phase, expected_time=None):
+        bad_fields = [name for name in ("qpos", "qvel", "ctrl", "qacc", "qfrc_bias")
+                      if not np.all(np.isfinite(getattr(cm.data, name)))]
+        warnings = [name for name in ("mjWARN_BADQPOS", "mjWARN_BADQVEL", "mjWARN_BADQACC", "mjWARN_BADCTRL")
+                    if cm.data.warning[getattr(mujoco.mjtWarning, name)].number > 0]
+        reset = expected_time is not None and not np.isclose(cm.data.time, expected_time, rtol=0, atol=1e-10)
+        if bad_fields or warnings or reset:
+            return MoveOutcome(None, False, phase,
+                "numerical instability interrupted simulation; no physical feasibility conclusion",
+                dict(category="numerical_instability", nonfinite_fields=bad_fields,
+                     warnings=warnings, time_reset=bool(reset), time_s=float(cm.data.time)))
+        return None
+
+    def step(phase, move_index):
+        nonlocal step_count
+        invalid = numerical_failure(phase)
+        if invalid is not None:
+            return invalid
+        apply_controls()
+        invalid = numerical_failure(phase)
+        if invalid is not None:
+            return invalid
+        expected_time = cm.data.time + dt
+        mujoco.mj_step(cm.model, cm.data)
+        step_count += 1
+        invalid = numerical_failure(phase, expected_time)
+        if invalid is not None:
+            return invalid
+        if integration_observer is not None:
+            integration_observer(cm, phase, move_index, dict(current_holds))
+        # efc_force here is the force actually used during the integration.
+        failure = _check_all_anchored(cm, current_holds)
+        # mj_step integrates qpos after computing its caches. Refresh them so
+        # arrival checks, viewers and the next force check see the new state.
+        mujoco.mj_forward(cm.model, cm.data)
+        invalid = numerical_failure(phase)
+        if invalid is not None:
+            return invalid
+        failure = failure or _check_all_anchored(cm, current_holds)
+        emit(phase, move_index)
+        if failure is not None:
+            failure.phase = phase
+        return failure
+
+    def run_window(seconds, phase, move_index):
+        for _ in range(int(np.ceil(seconds / dt))):
+            failure = step(phase, move_index)
+            if failure is not None:
+                return failure
+        return None
+
+    def finish_failure(failure, move_index, fall=False):
+        result.outcomes.append(failure)
+        result.fell = fall and failure.detail.get("category") != "numerical_instability"
+        if failure.detail.get("category") == "numerical_instability":
+            # Preserve the last valid visual sample; invalid/reset engine state
+            # must not be rendered as if it were a physical trajectory.
+            return
+        if fall:
+            failed_limb = failure.detail.get("limb")
+            if failed_limb:
+                cm.set_grip_active(failed_limb, False)
+                current_holds[failed_limb] = None
+                mujoco.mj_forward(cm.model, cm.data)
+        if numerical_failure(failure.phase) is None:
+            emit("failure", move_index, force_capture=True)
+
     start_targets = {limb: route.hold(hn).pos for limb, hn in current_holds.items()}
-    solve_pose_ik(cm, start_targets)
+    residual = solve_pose_ik(cm, start_targets, tol=INITIAL_POSE_TOL, max_iters=600)
+    for limb in LIMBS:
+        _set_ctrl_from_qpos(cm, limb)
+    mujoco.mj_forward(cm.model, cm.data)
+    invalid = numerical_failure("initialization")
+    if invalid is not None:
+        finish_failure(invalid, -1)
+        return result
+    emit("initialization", -1, force_capture=True)
+    invalid = numerical_failure("initialization")
+    if invalid is not None:
+        finish_failure(invalid, -1)
+        return result
+    if not np.isfinite(residual) or residual > INITIAL_POSE_TOL:
+        finish_failure(MoveOutcome(None, False, "initialization",
+            "starting-pose IK did not converge; no physical feasibility conclusion",
+            dict(category="initial_ik_nonconvergence", residual_m=float(residual), time_s=0.0)), -1)
+        return result
+
     for limb, hn in current_holds.items():
         cm.set_limb_anchor(limb, route.hold(hn).pos)
         cm.set_grip_active(limb, True)
         cm.set_limb_gain(limb, A.JOINT_KP, A.JOINT_KV)
-    mujoco.mj_forward(cm.model, cm.data)
-    for limb in LIMBS:
         _set_ctrl_from_qpos(cm, limb)
-
-    result = AttemptResult(route=route)
-
-    def run_steps(n, capture=True):
-        for i in range(n):
-            mujoco.mj_step(cm.model, cm.data)
-            if capture and renderer is not None and i % frame_every == 0:
-                result.frames.append(_capture(cm, renderer))
-
-    run_steps(int(INITIAL_SETTLE_S / DT))  # let the fall-into-stance transient die out
-    bad = _check_all_anchored(cm, current_holds)
+    posture_targets[:] = cm.data.qpos[actuator_qadr]
+    mujoco.mj_forward(cm.model, cm.data)
+    invalid = numerical_failure("initialization")
+    if invalid is not None:
+        finish_failure(invalid, -1)
+        return result
+    apply_controls()
+    mujoco.mj_forward(cm.model, cm.data)
+    bad = numerical_failure("initialization") or _check_all_anchored(cm, current_holds)
     if bad is not None:
-        bad.reason = "starting stance is not stable: " + bad.reason
-        result.outcomes.append(bad)
-        result.fell = True
-        run_steps(int(1.0 / DT))
+        bad.phase = "initialization"
+    else:
+        bad = run_window(INITIAL_SETTLE_S, "initialization", -1)
+    if bad is not None:
+        bad.reason = "starting stance failed: " + bad.reason
+        finish_failure(bad, -1, fall=True)
         return result
 
-    for move in route.moves:
+    for move_index, move in enumerate(route.moves):
         limb = move.limb
         target_hold = route.hold(move.hold)
-        target_pos = np.array(target_hold.pos)
-
-        dist_from_anchor = float(np.linalg.norm(target_pos - cm.limb_site_pos(limb)))
-        max_r = _max_reach(limb)
-        # must be captured before solve_ik_best, which leaves cm.data.qpos set to its
-        # solution -- capturing it after made start_q == target_q, silently turning the
-        # "interpolate from current pose to target" transition into a no-op (constant
-        # ctrl at the target pose) with the limb then just sagging under gravity for the
-        # full transition, unconstrained, since its grip was also released. That produced
-        # a huge, spurious end-of-transition gap (~0.3-0.8 m) on every move, feasible or
-        # not -- masked on feasible moves only because the subsequent grip-reconnect snap
-        # (see model.set_limb_gain / _hold_geom_xml history) forcibly relocated the limb.
-        pre_move_q = np.array([cm.data.qpos[a] for a in cm.limb_joint_qpos_adr[limb]])
-
+        target_pos = np.asarray(target_hold.pos, dtype=float)
+        contact_distance = min(CONTACT_DISTANCE_M, target_hold.radius)
+        base_distance = float(np.linalg.norm(target_pos - _limb_base_pos(cm, limb)))
+        distance = float(np.linalg.norm(target_pos - cm.limb_site_pos(limb)))
+        max_reach = _max_reach(limb)
+        if base_distance > max_reach + REACH_TOL:
+            finish_failure(MoveOutcome(move, False, "reachability",
+                f"'{move.hold}' exceeds {limb}'s maximum extension from the current stance",
+                dict(category="geometric_reach_limit", distance_m=base_distance,
+                     site_distance_m=distance, max_reach_m=max_reach,
+                     residual_m=base_distance - max_reach)), move_index)
+            break
         ik = solve_ik_best(cm, limb, target_pos, tol=REACH_TOL)
         if not ik.reached:
-            deficit = ik.residual_m
-            outcome = MoveOutcome(
-                move=move, passed=False, phase="reachability",
-                reason=(f"'{move.hold}' is not reachable by {limb}: "
-                        f"{deficit * 100:.1f} cm short after IK convergence "
-                        f"(currently {dist_from_anchor:.2f} m from the target hold, "
-                        f"~{max_r:.2f} m is the limb's max extension from its shoulder/hip)"),
-                detail=dict(residual_m=deficit, distance_m=dist_from_anchor, max_reach_m=max_r),
-            )
-            result.outcomes.append(outcome)
+            finish_failure(MoveOutcome(move, False, "planning",
+                f"IK did not converge for {limb} at '{move.hold}'; reachability is unresolved",
+                dict(category="ik_nonconvergence", residual_m=ik.residual_m,
+                     distance_m=distance, max_reach_m=max_reach)), move_index)
             break
 
-        target_q = ik.q
-
+        qadr = cm.limb_joint_qpos_adr[limb]
+        actuator_ids = cm.actuator_ctrl_for_limb(limb)
+        command_q = cm.data.qpos[qadr].copy()
+        command_velocity = np.zeros_like(command_q)
+        target_q = ik.q.copy()
         cm.set_grip_active(limb, False)
-        cm.set_limb_gain(limb, A.JOINT_KP, A.JOINT_KV)
-        start_q = pre_move_q
-        # re-seed qpos back to the pre-move pose; IK is only used to compute the target
-        for a, v in zip(cm.limb_joint_qpos_adr[limb], start_q):
-            cm.data.qpos[a] = v
-
-        n_steps = int(TRANSITION_S / DT)
-        # Closed-loop re-aim, not a single open-loop plan: joint-space interpolation
-        # computed once against the pre-move torso pose assumes that pose holds for the
-        # whole transition. It doesn't -- dropping to 3-point support makes the torso
-        # genuinely sag as it finds its new equilibrium (~0.3-0.5 m over ~1s during
-        # development, then plateauing) -- so a plan aimed at the old pose drifts off the
-        # real-world target by a similar margin. Every RESOLVE_EVERY steps we re-run a
-        # fast local IK from the limb's actual current joint angles, against the same
-        # fixed world-space hold position, which re-aims for whatever the torso is
-        # actually doing right now (closer to how a climber continuously corrects a reach
-        # using proprioception than a single ballistic plan).
-        RESOLVE_EVERY = 50  # 0.1s at DT=0.002
-        seg_start_q, seg_target_q, seg_start_step = start_q, target_q, 0
+        current_holds[limb] = None
+        mujoco.mj_forward(cm.model, cm.data)
+        n_steps = int(np.ceil(TRANSITION_S / dt))
+        replan_steps = max(1, int(round(REPLAN_S / dt)))
         failure = None
-        for step in range(n_steps):
-            if step > 0 and step % RESOLVE_EVERY == 0:
-                cur_q = np.array([cm.data.qpos[a] for a in cm.limb_joint_qpos_adr[limb]])
-                refined = solve_ik_best(cm, limb, target_pos, tol=REACH_TOL)
-                # A re-solve that didn't converge is worse than no re-solve: an early
-                # version used a cheap 2-seed search here and, once, it landed on an
-                # unconverged *different* local minimum (shoulder rotation jumping ~34
-                # degrees from the actual current pose) rather than refining toward the
-                # real one. Chasing that bad target commanded a brief ~7 rad/s joint
-                # velocity, whose reaction was what actually tripped a foothold's grip
-                # check -- not the move itself. Using the full multi-seed search here and
-                # discarding a non-converged result (keeping the previous target instead
-                # of a wrong one) fixed it.
+        arrived = False
+        for index in range(n_steps):
+            if index > 0 and index % replan_steps == 0:
+                refined = solve_ik_best(cm, limb, target_pos, tol=REACH_TOL,
+                                        n_random_seeds=0, max_iters=100)
                 if refined.reached:
-                    # Rate-limited: if the torso has drifted since the last re-aim, the
-                    # fresh solution can still be meaningfully far from cur_q, and closing
-                    # that gap within one more RESOLVE_EVERY window would demand a sudden
-                    # burst of joint velocity. Capping the per-axis step keeps every
-                    # segment gentle; a target still far after one segment gets chased
-                    # further next segment.
-                    MAX_STEP = np.deg2rad(20.0)
-                    step_vec = np.clip(refined.q - cur_q, -MAX_STEP, MAX_STEP)
-                    seg_start_q, seg_target_q, seg_start_step = cur_q, cur_q + step_vec, step
-                else:
-                    for a, v in zip(cm.limb_joint_qpos_adr[limb], cur_q):
-                        cm.data.qpos[a] = v  # undo solve_ik_best leaving qpos at its (bad) result
-                    seg_start_q, seg_start_step = cur_q, step
-                # mj_step recomputes the forward pass from qpos/qvel every call, so we
-                # don't need to otherwise restore data here, but qvel is untouched and
-                # still reflects real dynamics -- that's exactly what we want to keep.
-            frac = min(1.0, (step - seg_start_step + 1) / RESOLVE_EVERY)
-            # quintic ease (zero velocity *and* zero acceleration at both endpoints): a
-            # cubic smoothstep here left a small acceleration discontinuity right at the
-            # end of the move, which showed up as a brief (~60ms) reactive force spike on
-            # the other anchored limbs as the moving limb "caught" its target -- enough to
-            # trip a foothold's max-grip check on an otherwise clearly-fine move.
-            smooth = frac ** 3 * (10 - 15 * frac + 6 * frac ** 2)
-            q_cmd = seg_start_q + smooth * (seg_target_q - seg_start_q)
-            for j, v in zip(LIMB_JOINTS[limb], q_cmd):
-                aid = cm.model.actuator(f"act_{j}").id
-                cm.data.ctrl[aid] = v
-            mujoco.mj_step(cm.model, cm.data)
-            if renderer is not None and step % frame_every == 0:
-                result.frames.append(_capture(cm, renderer))
-            failure = _check_all_anchored(cm, current_holds, exclude=(limb,))
+                    target_q = refined.q
+            desired_velocity = np.clip((target_q - command_q) / dt,
+                                       -COMMAND_SPEED_RAD_S, COMMAND_SPEED_RAD_S)
+            command_velocity += np.clip(desired_velocity - command_velocity,
+                                        -COMMAND_ACCEL_RAD_S2 * dt, COMMAND_ACCEL_RAD_S2 * dt)
+            advance = command_velocity * dt
+            crossing = np.abs(advance) >= np.abs(target_q - command_q)
+            command_q = np.where(crossing, target_q, command_q + advance)
+            command_velocity[crossing] = 0.0
+            # Compensate the moving chain's gravity/Coriolis bias through the
+            # same torque-limited position actuators. This removes static PD
+            # tracking error without adding an unbounded external body force.
+            posture_targets[actuator_ids] = command_q
+            failure = step("dynamic", move_index)
             if failure is not None:
                 break
-
+            distance, speed = _contact_state(cm, limb, target_pos)
+            if distance <= contact_distance and speed <= CONTACT_SPEED_M_S:
+                arrived = True
+                break
         if failure is not None:
             failure.move = move
             failure.reason = f"during move to '{move.hold}': {failure.reason}"
-            result.outcomes.append(failure)
-            result.fell = True
-            for held_limb in list(current_holds):
-                if held_limb != limb:
-                    hn = current_holds[held_limb]
-                    hold = route.hold(hn)
-                    gc = check_grip(held_limb, hold, cm.model, cm.data, cm.limb_eq_id[held_limb])
-                    if not gc.ok:
-                        cm.set_grip_active(held_limb, False)
-            run_steps(int(1.2 / DT))
+            finish_failure(failure, move_index, fall=True)
+            break
+        if not arrived:
+            distance, speed = _contact_state(cm, limb, target_pos)
+            finish_failure(MoveOutcome(move, False, "dynamic",
+                f"controller did not arrive at '{move.hold}' within the contact distance/speed limits",
+                dict(category="contact_not_reached", distance_m=distance, speed_m_s=speed,
+                     distance_limit_m=contact_distance, speed_limit_m_s=CONTACT_SPEED_M_S,
+                     ik_residual_m=ik.residual_m)), move_index)
             break
 
-        cm.set_limb_anchor(limb, target_pos)
+        # The nominal point describes a finite contact patch. Attach where
+        # contact actually occurred; snapping to its center would inject an
+        # artificial constraint impulse even after an otherwise valid arrival.
+        cm.set_limb_anchor(limb, cm.limb_site_pos(limb))
         cm.set_grip_active(limb, True)
-        cm.set_limb_gain(limb, A.JOINT_KP, A.JOINT_KV)
-        _set_ctrl_from_qpos(cm, limb)
+        posture_targets[actuator_ids] = cm.data.qpos[qadr]
         current_holds[limb] = move.hold
-
-        # Checked only at the end of the settle window, not every step: re-engaging a
-        # grip constraint the instant the moving limb arrives is an idealization (a real
-        # hand doesn't achieve full, precise grip force the instant it touches a hold
-        # either), and produces a brief instantaneous-snap transient that isn't a genuine
-        # failure -- what matters is whether the climber can hold the resulting position
-        # once things settle.
-        for step in range(int(SETTLE_S / DT)):
-            mujoco.mj_step(cm.model, cm.data)
-            if renderer is not None and step % frame_every == 0:
-                result.frames.append(_capture(cm, renderer))
-        settle_failure = _check_all_anchored(cm, current_holds)
-
-        if settle_failure is not None:
-            settle_failure.move = move
-            settle_failure.phase = "settle"
-            settle_failure.reason = f"move to '{move.hold}' reached but did not hold: {settle_failure.reason}"
-            result.outcomes.append(settle_failure)
-            result.fell = True
-            run_steps(int(1.2 / DT))
+        mujoco.mj_forward(cm.model, cm.data)
+        failure = numerical_failure("settle")
+        if failure is not None:
+            failure.move = move
+            finish_failure(failure, move_index)
             break
-
-        result.outcomes.append(MoveOutcome(
-            move=move, passed=True, phase="settle",
-            reason=f"{limb} reached and held '{move.hold}'",
-            detail=dict(ik_residual_m=ik.residual_m),
-        ))
-
+        apply_controls()
+        mujoco.mj_forward(cm.model, cm.data)
+        failure = numerical_failure("settle")
+        if failure is not None:
+            failure.move = move
+            finish_failure(failure, move_index)
+            break
+        emit("contact", move_index, force_capture=True)
+        failure = _check_all_anchored(cm, current_holds)
+        if failure is None:
+            failure = run_window(SETTLE_S, "settle", move_index)
+        if failure is not None:
+            failure.move, failure.phase = move, "settle"
+            failure.reason = f"after arrival at '{move.hold}': {failure.reason}"
+            finish_failure(failure, move_index, fall=True)
+            break
+        result.outcomes.append(MoveOutcome(move, True, "settle",
+            f"{limb} reached and held '{move.hold}'",
+            dict(ik_residual_m=ik.residual_m, arrival_distance_m=distance,
+                 arrival_speed_m_s=speed, contact_radius_m=contact_distance, category="completed")))
+    if result.success:
+        emit("complete", len(route.moves) - 1, force_capture=True)
     return result

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Appends one hypothetical move onto a base route's existing (already-
-feasible) end stance and runs it through the real, unmodified physics
-pipeline -- the "try a move" feature behind the 3D viewer's picker UI.
+"""Append a hypothetical move and rerun the whole route through the simulator.
+Earlier failures prevent the appended move from being attempted.
 
     python scripts/test_move.py data/routes/easy_ladder.json left_hand lh1 out.json
 """
@@ -19,7 +18,7 @@ from export_trajectory import build_trajectory_payload
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("route_json", help="path to the base route JSON (must already be feasible)")
+    ap.add_argument("route_json", help="path to the base route JSON")
     ap.add_argument("limb", choices=["left_hand", "right_hand", "left_foot", "right_foot"])
     ap.add_argument("hold", help="target hold name, must exist in the base route's holds")
     ap.add_argument("out_json", help="path to write the trajectory JSON to")
@@ -33,12 +32,14 @@ def main():
     route.moves = [*route.moves, Move(limb=args.limb, hold=args.hold)]
     payload = build_trajectory_payload(route)
     payload["route"] = f"{route.name} + {args.limb} -> {args.hold}"
-    Path(args.out_json).write_text(json.dumps(payload))
+    Path(args.out_json).write_text(json.dumps(payload, allow_nan=False))
 
     print(f"Wrote {len(payload['frames'])} frames ({args.out_json})")
-    print(f"Overall: {'FEASIBLE' if payload['success'] else 'INFEASIBLE'}" + (" (fell)" if payload["fell"] else ""))
+    print(f"Overall: {'COMPLETED IN SIMULATION' if payload['success'] else 'NOT COMPLETED'}")
     last = payload["outcomes"][-1]
-    print(f"Tested move: [{'PASS' if last['passed'] else 'FAIL'}] {last['move']}: {last['reason']}")
+    print(f"Last outcome: [{'PASS' if last['passed'] else 'FAIL'}] {last['move']}: {last['reason']}")
+    if len(payload["outcomes"]) < len(route.moves):
+        print("The appended move was not attempted because the base route stopped earlier.")
 
 
 if __name__ == "__main__":

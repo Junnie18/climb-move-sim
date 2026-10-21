@@ -7,9 +7,92 @@ solver is real physics, not a placeholder (see forces.py docstring).
 
 import mujoco
 import numpy as np
+import pytest
 
 from climbsim.forces import check_grip
 from climbsim.holds import Hold, HoldType
+
+
+def constrained_mass(required_force):
+    """One kg at rest; the connect force must oppose the specified gravity."""
+    gravity = " ".join(str(-component) for component in required_force)
+    model = mujoco.MjModel.from_xml_string(f"""
+    <mujoco>
+      <option gravity="{gravity}"/>
+      <worldbody>
+        <body name="mass"><freejoint/>
+          <geom type="sphere" size="0.1" mass="1"/>
+          <site name="limb"/>
+        </body>
+        <site name="hold"/>
+      </worldbody>
+      <equality><connect site1="limb" site2="hold" solref="0.01 1"/></equality>
+    </mujoco>
+    """)
+    data = mujoco.MjData(model)
+    for _ in range(300):
+        mujoco.mj_step(model, data)
+    return model, data
+
+
+def test_sloper_cannot_pull_even_with_zero_shear():
+    model, data = constrained_mass((0, -100, 0))
+    result = check_grip("left_hand", Hold("s", (0, 0, 0), HoldType.SLOPER), model, data, 0)
+    assert result.normal_n == pytest.approx(-100, abs=0.01)
+    assert not result.friction_cone_ok
+
+
+@pytest.mark.parametrize("hold_type", list(HoldType))
+def test_feet_cannot_pull_on_any_hold_type(hold_type):
+    force = (0, 0, -100) if hold_type == HoldType.FOOTHOLD else (0, -100, 0)
+    model, data = constrained_mass(force)
+    result = check_grip("left_foot", Hold("h", (0, 0, 0), hold_type), model, data, 0)
+    assert not result.friction_cone_ok
+
+
+def test_foothold_supports_bodyweight_in_upward_direction():
+    model, data = constrained_mass((0, 0, 100))
+    result = check_grip("right_foot", Hold("h", (0, 0, 0), HoldType.FOOTHOLD), model, data, 0)
+    assert result.normal_n == pytest.approx(100, abs=0.01)
+    assert result.tangential_n == pytest.approx(0, abs=0.01)
+    assert result.ok
+
+
+@pytest.mark.parametrize("shear, passes", [(40, True), (60, False)])
+def test_foot_uses_configured_surface_normal_and_friction(shear, passes):
+    model, data = constrained_mass((shear, 0, 100))
+    hold = Hold("edge", (0, 0, 0), HoldType.JUG,
+                normal=(0, 0, 2), friction_override=0.5)
+    result = check_grip("right_foot", hold, model, data, 0)
+    assert result.normal_n == pytest.approx(100, abs=0.01)
+    assert result.tangential_n == pytest.approx(shear, abs=0.01)
+    assert result.friction_cone_ok == passes
+
+
+@pytest.mark.parametrize("hold_type", [HoldType.JUG, HoldType.CRIMP])
+def test_positive_hand_grips_retain_effective_anchor_model(hold_type):
+    model, data = constrained_mass((0, -100, 0))
+    result = check_grip("right_hand", Hold("h", (0, 0, 0), hold_type), model, data, 0)
+    assert result.ok
+
+
+def test_grip_cap_override_is_enforced_on_actual_reaction_force():
+    model, data = constrained_mass((0, 0, 100))
+    hold = Hold("edge", (0, 0, 0), HoldType.CRIMP, max_grip_n_override=90)
+    assert not check_grip("left_hand", hold, model, data, 0).within_max_grip
+
+
+def test_force_extraction_matches_world_frame_gravity_on_each_axis():
+    from climbsim.forces import grip_force
+
+    model, data = constrained_mass((15, -20, 30))
+    np.testing.assert_allclose(grip_force(model, data, 0), [15, -20, 30], atol=0.01)
+
+
+def test_unknown_limb_is_rejected():
+    model, data = constrained_mass((0, 0, 100))
+    with pytest.raises(ValueError, match="limb"):
+        check_grip("tail", Hold("h", (0, 0, 0), HoldType.JUG), model, data, 0)
 
 
 def test_single_mass_hang_matches_gravity_exactly():
