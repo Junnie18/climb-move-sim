@@ -43,6 +43,39 @@
     if (includeMoves) route.moves.forEach(move => { result[move.limb] = move.hold; });
     return result;
   }
+  function starter(source) {
+    const route = clone(source), contacts = new Set(Object.values(route.start));
+    route.name = 'My climbing route'; route.moves = [];
+    route.holds = route.holds.filter(h => contacts.has(h.name));
+    for (const side of ['left', 'right']) {
+      const origin = route.holds.find(h => h.name === route.start[side + '_hand']);
+      route.holds.push({name: 'target_' + side, type: 'jug', pos: [origin.pos[0], origin.pos[1], Number((origin.pos[2] + .2).toFixed(3))]});
+    }
+    return validate(route);
+  }
+  function moveDistance(route, index) {
+    const move = route.moves[index], previous = {...route.start};
+    route.moves.slice(0, index).forEach(m => { previous[m.limb] = m.hold; });
+    const a = route.holds.find(h => h.name === previous[move.limb]).pos, b = route.holds.find(h => h.name === move.hold).pos;
+    return Math.hypot(...a.map((value, i) => value - b[i]));
+  }
+  function describeResult(data) {
+    const failure = data.outcomes?.find(o => !o.passed), category = failure?.detail?.category;
+    const hasMoves = data.routeDefinition ? data.routeDefinition.moves.length > 0 : data.outcomes?.some(o => o.phase !== 'initialization' && o.move !== '(starting stance)');
+    if (data.success) return {title: hasMoves ? 'The model completed your moves' : 'The starting stance held', text: hasMoves ? 'The simulated climber passed the configured movement, contact and grip checks. Watch the motion below. This is a simplified model, not a guarantee for a human climber.' : 'The simulated climber held its four starting contacts through the settling check. No climbing moves were tested. Add a move to test a reach.', kind: 'passed'};
+    if (category === 'numerical_instability') return {title: 'The simulation became unstable', text: 'Reset the wall or try a smaller change. This is a numerical failure, not a physical feasibility verdict.', kind: 'failed'};
+    if (category === 'initial_ik_nonconvergence') return {title: 'No starting body pose was found', text: 'Move the starting holds closer together or reset the wall. The pose solver could not match all four starting contacts; stability has not been tested.', kind: 'failed'};
+    if (failure?.phase === 'initialization') return {title: 'The starting pose did not hold', text: 'Try moving the starting holds closer to their original positions, or reset the wall. The model could not establish a stable starting stance.', kind: 'failed'};
+    if (category === 'geometric_reach_limit') return {title: 'That hold is out of reach from this stance', text: 'Move the target closer to the hand or foot, then test again. The other contacts stay fixed during this reach.', kind: 'failed'};
+    if (category === 'ik_nonconvergence') return {title: 'No suitable body pose was found', text: 'Move the target closer or adjust the other contacts. The pose solver stopped; this does not prove that a person cannot make the move.', kind: 'failed'};
+    if (category === 'grip_strength_exceeded') return {title: 'A grip could not support the load', text: 'Try a closer target or change the hold’s grip strength in Advanced settings. The calculated force exceeded the configured grip limit.', kind: 'failed'};
+    if (category === 'contact_cone_exceeded') {
+      const limb = failure.detail?.limb?.replace(/_/g, ' '), contact = limb ? `the ${limb}` : 'a contact';
+      return {title: failure.phase === 'settle' ? `The hold was reached, then support failed at ${contact}` : `The model lost support at ${contact}`, text: 'The contact needed force in a direction that its friction constraint could not support. Try a smaller move or adjust the starting stance.', kind: 'failed'};
+    }
+    if (category === 'contact_not_reached') return {title: 'The limb did not settle onto the hold', text: 'The controller could not reach the target closely and slowly enough to attach. Bring the target closer and test again.', kind: 'failed'};
+    return {title: 'The model stopped before finishing', text: 'Try a smaller move. The detailed diagnostic below explains which controller check stopped this attempt.', kind: 'failed'};
+  }
   function create(route) {
     validate(route);
     let current = clone(route), baseline = clone(route), revision = 0, history = [], result = null;
@@ -56,6 +89,6 @@
       accept(token, trajectory) { if (token.revision !== revision) return false; result = trajectory; return true; }
     };
   }
-  const api = {LIMBS, DEFAULTS, clone, validate, fromDemo, assignments, create};
+  const api = {LIMBS, DEFAULTS, clone, validate, fromDemo, assignments, starter, moveDistance, describeResult, create};
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ClimbEditorState = api;
 })(typeof window !== 'undefined' ? window : globalThis);

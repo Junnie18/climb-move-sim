@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlsplit
 import mujoco
 
 from climbsim.route import Route
+from climbsim.pose_preview import build_pose_preview
 
 MAX_BODY_BYTES = 128 * 1024
 MAX_FRAMES = 900
@@ -211,7 +212,7 @@ def make_handler(static_dir, *, runner=None, allowed_origins=DEFAULT_ORIGINS):
         def do_OPTIONS(self):
             if not self._check_origin():
                 return
-            if urlsplit(self.path).path not in ("/api/health", "/api/simulate"):
+            if urlsplit(self.path).path not in ("/api/health", "/api/simulate", "/api/preview"):
                 self._json(404, {"error": "Not found."})
                 return
             self.send_response(204)
@@ -255,7 +256,8 @@ def make_handler(static_dir, *, runner=None, allowed_origins=DEFAULT_ORIGINS):
         def do_POST(self):
             if not self._check_origin():
                 return
-            if urlsplit(self.path).path != "/api/simulate":
+            path = urlsplit(self.path).path
+            if path not in ("/api/simulate", "/api/preview"):
                 self._json(404, {"error": "Not found."})
                 return
             if self.headers.get_content_type() != "application/json":
@@ -291,6 +293,14 @@ def make_handler(static_dir, *, runner=None, allowed_origins=DEFAULT_ORIGINS):
                 route_data, frame_every = validate_request(body)
             except (ValueError, TypeError, OverflowError) as exc:
                 self._json(422, {"error": str(exc)[:500]})
+                return
+            if path == "/api/preview":
+                try:
+                    pose = build_pose_preview(Route.from_dict(route_data))
+                except Exception:
+                    self._json(500, {"error": "The pose solver could not produce a preview. Try a different stance."})
+                else:
+                    self._json(200, {"preview": pose})
                 return
             try:
                 trajectory = self.runner.run(route_data, frame_every)

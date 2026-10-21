@@ -36,3 +36,29 @@ test('malformed hold types, normals and moves fail with actionable validation er
   r.holds[0].type = 'jug'; r.holds[0].normal = [0, 0, 0]; assert.throws(() => E.validate(r), /nonzero finite/);
   delete r.holds[0].normal; r.moves = [null]; assert.throws(() => E.validate(r), /valid single-limb moves/);
 });
+test('starter keeps the four starting contacts and two separated targets, with no inherited moves', () => {
+  const source = route(); source.holds.push({name: 'old_target', type: 'jug', pos: [0, .05, 1.6]});
+  source.moves.push({limb: 'left_hand', hold: 'old_target'});
+  const starter = E.starter(source);
+  assert.equal(starter.holds.length, 6); assert.deepEqual(starter.start, source.start); assert.deepEqual(starter.moves, []);
+  assert.equal(starter.holds.some(h => h.name === 'old_target'), false);
+  assert.ok(Math.abs(starter.holds.find(h => h.name === 'target_left').pos[2] - 1.75) < 1e-10);
+  assert.equal(source.moves.length, 1);
+});
+test('move distances use the previous contact of that limb, not always the starting hold', () => {
+  const r = E.starter(route()); r.moves = [{limb: 'left_hand', hold: 'target_left'}, {limb: 'left_hand', hold: 'left_hand'}];
+  assert.ok(Math.abs(E.moveDistance(r, 0) - .2) < 1e-10);
+  assert.ok(Math.abs(E.moveDistance(r, 1) - .2) < 1e-10);
+});
+test('result explanations distinguish unreachable targets, grip failures, and planner failures', () => {
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'reachability', detail: {category: 'geometric_reach_limit'}}]}).title, /reach/i);
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'settle', detail: {category: 'grip_strength_exceeded'}}]}).title, /grip/i);
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'reachability', detail: {category: 'ik_nonconvergence'}}]}).title, /pose/i);
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'initialization', detail: {category: 'ik_nonconvergence'}}]}).title, /starting/i);
+  assert.match(E.describeResult({success: true, outcomes: []}).title, /stance/i);
+  assert.match(E.describeResult({success: true, outcomes: [{passed: true, move: '(starting stance)', phase: 'initialization', detail: {category: 'completed'}}]}).title, /stance/i);
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'settle', detail: {category: 'contact_cone_exceeded', limb: 'left_foot'}}]}).title, /reached.*left foot/i);
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'initialization', detail: {category: 'initial_ik_nonconvergence'}}]}).text, /stability has not been tested/i);
+  assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'initialization', detail: {category: 'numerical_instability'}}]}).text, /numerical failure/i);
+  assert.match(E.describeResult({success: true, outcomes: [{passed: true, move: '(starting stance)', phase: 'initialization'}]}).text, /No climbing moves were tested/);
+});

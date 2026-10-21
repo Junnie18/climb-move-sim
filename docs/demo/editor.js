@@ -8,9 +8,11 @@
   const canvas = $('planner'), ctx = canvas.getContext('2d');
   const templates = (window.CLIMB_DEMOS || []).flatMap(d => { try { return [{name: d.route, route: E.fromDemo(d)}]; } catch { return []; } });
   if (!templates.length) { $('editor-status').textContent = 'No editable route templates were found. Load the bundled demo data to use the editor.'; $('run-simulation').disabled = true; return; }
-  const store = E.create(templates[0].route);
-  let mode = 'start', tool = 'holds', selectedLimb = 'left_hand', selectedHold = store.route.holds[0].name;
+  const starter = E.starter(templates[0].route); templates.unshift({name: 'Blank wall · four starting contacts', route: starter});
+  const store = E.create(starter);
+  let mode = 'moves', tool = 'limbs', selectedLimb = 'left_hand', selectedHold = 'target_left';
   let width = 800, height = 600, drag = null, busy = false, runId = 0, zoom = 1, importedRoute = null;
+  let preview = null, previewRevision = -1, previewTimer, previewController;
   const camera = {x: 0, z: 1.3, scale: 360};
   const hostedDefault = location.hostname === 'junnie18.github.io' && /^\/climb-move-sim(?:\/|$)/.test(location.pathname) ? 'https://ascent-climbing-lab.vercel.app' : '';
   const defaultSimulatorUrl = window.CLIMB_SIMULATOR_URL || hostedDefault;
@@ -24,6 +26,11 @@
   const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
   const currentRoute = () => drag?.route || store.route;
   const holdsByName = route => Object.fromEntries(route.holds.map(h => [h.name, h]));
+  function holdLabel(route, name) {
+    const starting = E.LIMBS.find(limb => route.start[limb] === name);
+    if (starting) return names[starting] + ' start';
+    return 'Hold ' + (route.holds.filter(h => !Object.values(route.start).includes(h.name)).findIndex(h => h.name === name) + 1);
+  }
   function endpointMap(route) { const holds = holdsByName(route); return Object.fromEntries(Object.entries(E.assignments(route, mode === 'moves')).map(([limb, hold]) => [limb, holds[hold].pos])); }
   function handlePoint(limb, position) { const p = project(position); return {x: p.x + (limb.startsWith('left') ? -31 : 31), y: p.y + (limb.endsWith('foot') ? 15 : 0)}; }
   function setStatus(title, text, kind = 'draft') {
@@ -31,23 +38,23 @@
     $('editor-verdict').className = `editor-verdict ${kind}`;
   }
   function invalidate(message = 'Your route changed. Run a new simulation to test this version.') {
-    $('view-result').hidden = true; window.ClimbReplay?.invalidate();
+    $('view-result').hidden = true; $('replay-tab').disabled = true; window.ClimbReplay?.invalidate();
     setStatus(busy ? 'Route changed during simulation' : 'Ready to test your route', busy ? 'The running result will be discarded. Run again when it finishes to test these edits.' : message);
   }
   function commit(route, message) {
-    try { if (store.commit(route)) invalidate(message); renderControls(); draw(); return true; }
+    try { if (store.commit(route)) { invalidate(message); schedulePreview(); } renderControls(); draw(); return true; }
     catch (error) { setStatus('Check this edit', error.message, 'error'); renderControls(); draw(); return false; }
   }
   function edit(mutate, message) { const route = store.route; mutate(route); return commit(route, message); }
   function showTab(tab) {
     const editing = tab === 'editor'; $('editor-stage').hidden = !editing; $('replay-stage').hidden = editing;
     ['editor', 'replay'].forEach(name => { $(name + '-tab').classList.toggle('active', name === tab); $(name + '-tab').setAttribute('aria-pressed', String(name === tab)); });
-    if (editing) { window.ClimbReplay?.pause(); resize(); } else requestAnimationFrame(() => window.ClimbReplay?.resize());
+    if (editing) { window.ClimbReplay?.pause(); resize(); } else window.ClimbReplay?.resize();
   }
-  function setMode(next) { mode = next; tool = 'limbs'; renderControls(); draw(); }
+  function setMode(next) { mode = next; tool = 'limbs'; renderControls(); draw(); schedulePreview(); }
   function fit() {
     const positions = store.route.holds.map(h => h.pos), xs = positions.map(p => p[0]), zs = positions.map(p => p[2]);
-    const minX = Math.min(...xs) - .35, maxX = Math.max(...xs) + .35, minZ = Math.min(...zs) - .22, maxZ = Math.max(...zs) + .32;
+    const minX = Math.min(...xs) - .5, maxX = Math.max(...xs) + .5, minZ = Math.min(...zs) - .25, maxZ = Math.max(...zs) + .4;
     camera.x = (minX + maxX) / 2; camera.z = (minZ + maxZ) / 2;
     camera.scale = Math.min((width - 100) / Math.max(maxX - minX, 1.2), (height - 110) / Math.max(maxZ - minZ, 1.3)); zoom = 1; draw();
   }
@@ -61,15 +68,16 @@
     $('edit-revision').textContent = `DRAFT ${String(store.revision + 1).padStart(2, '0')}`;
     ['holds', 'limbs'].forEach(t => { $('tool-' + t).classList.toggle('active', tool === t); $('tool-' + t).setAttribute('aria-pressed', String(tool === t)); });
     ['start', 'moves'].forEach(m => { $('mode-' + m).classList.toggle('active', mode === m); $('mode-' + m).setAttribute('aria-pressed', String(mode === m)); });
-    $('assignment-help').textContent = mode === 'start' ? 'Drag a limb handle onto a hold to set its starting contact.' : 'The figure shows the end of your sequence. Drag a limb onto a new hold to append a move.';
-    $('planner-context').textContent = tool === 'holds' ? 'Drag a hold to reshape the route.' : `${mode === 'start' ? 'Set the start' : 'Add the next move'}: drag a limb, or select one and click a hold.`;
+    $('assignment-help').textContent = mode === 'start' ? 'Editing starting contacts. Switch back to Add moves before planning your next reach.' : 'Drag a labeled hand or foot onto a hold. Each drop adds one move.';
+    $('planner-context').textContent = mode === 'start' ? 'Editing the starting pose' : route.moves.length ? `${route.moves.length} move${route.moves.length === 1 ? '' : 's'} planned · Drag another limb to continue` : 'Try dragging the left hand to hold 1';
+    if (!busy) $('run-simulation').querySelector('span').textContent = route.moves.length ? `Test ${route.moves.length} move${route.moves.length === 1 ? '' : 's'}` : 'Test starting stance';
     $('assign-limb').textContent = mode === 'start' ? 'Set contact' : 'Add move';
     $('limb-controls').replaceChildren(...E.LIMBS.map(limb => {
       const b = make('button', `limb-control${selectedLimb === limb ? ' selected' : ''}`); b.type = 'button'; b.style.setProperty('--limb', colors[limb]); b.setAttribute('aria-pressed', String(selectedLimb === limb));
-      b.append(make('span', 'limb-initial', initials[limb]), make('span', '', names[limb]), make('small', '', assigned[limb]));
+      b.append(make('span', 'limb-initial', initials[limb]), make('span', '', names[limb]), make('small', '', holdLabel(route, assigned[limb])));
       b.addEventListener('click', () => { selectedLimb = limb; tool = 'limbs'; renderControls(); draw(); }); return b;
     }));
-    const options = route.holds.map(h => ({value: h.name, label: h.name}));
+    const options = route.holds.map(h => ({value: h.name, label: holdLabel(route, h.name)}));
     selectOptions($('assignment-target'), options, selectedHold); selectOptions($('selected-hold'), options, selectedHold);
     const hold = holds[selectedHold], defaults = E.DEFAULTS[hold.type];
     $('hold-x').value = Number(hold.pos[0].toFixed(3)); $('hold-z').value = Number(hold.pos[2].toFixed(3)); $('hold-type').value = hold.type;
@@ -81,7 +89,7 @@
     $('move-count').textContent = route.moves.length; $('clear-moves').disabled = !route.moves.length; $('empty-moves').hidden = Boolean(route.moves.length);
     $('move-list').replaceChildren(...route.moves.map((move, index) => {
       const li = make('li', 'planned-move'), label = make('span', 'planned-move-label'); li.style.setProperty('--limb', colors[move.limb]);
-      label.append(make('strong', '', names[move.limb]), make('small', '', move.hold));
+      label.append(make('strong', '', names[move.limb] + ' to ' + holdLabel(route, move.hold).toLowerCase()), make('small', '', `${Math.round(E.moveDistance(route, index) * 100)} cm from the previous contact`));
       const controls = make('span', 'move-actions');
       [['↑', 'Move earlier', -1], ['↓', 'Move later', 1], ['×', 'Remove move', 0]].forEach(([text, action, direction]) => {
         const b = make('button', '', text); b.setAttribute('aria-label', `${action}: ${names[move.limb]} to ${move.hold}`); b.title = action;
@@ -103,6 +111,27 @@
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = color; ctx.lineWidth = lineWidth; ctx.setLineDash(dash); ctx.stroke(); ctx.setLineDash([]);
   }
   function circle(point, radius, fill, stroke, lineWidth = 1) { ctx.beginPath(); ctx.arc(point.x, point.y, radius, 0, Math.PI * 2); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lineWidth; ctx.stroke(); } }
+  function drawPreview(scale) {
+    if (!preview) return;
+    const G = window.ClimbGeometry; ctx.globalAlpha = previewRevision === store.revision && !drag ? 1 : .35;
+    preview.geometry.bodies.forEach(body => {
+      const i = preview.bodyNames.indexOf(body.name); if (i < 0) return;
+      const color = body.name === 'torso' ? '#809e91' : body.name.endsWith('_L') ? '#83b0a1' : '#b5aa87';
+      body.geoms.forEach(geom => {
+        const center = project(G.transform(preview.pos[i], preview.quat[i], geom));
+        if (geom.type === 'capsule') {
+          const ends = G.capsuleEndpoints(preview.pos[i], preview.quat[i], geom).map(project);
+          ctx.lineCap = 'round'; line(ends[0], ends[1], '#405e51', Math.max(4, geom.size[0] * scale * 2 + 1)); line(ends[0], ends[1], color, Math.max(3, geom.size[0] * scale * 2 - 1)); ctx.lineCap = 'butt';
+        } else if (geom.type === 'sphere') circle(center, Math.max(3, geom.size[0] * scale), color, '#496454');
+        else if (geom.type === 'box') {
+          const points = [[-1,0,-1],[1,0,-1],[1,0,1],[-1,0,1]].map(p => project(G.transform(preview.pos[i], preview.quat[i], geom, p.map((v,k) => v * geom.size[k]))));
+          ctx.beginPath(); points.forEach((p,k) => k ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y)); ctx.closePath(); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = '#496454'; ctx.stroke();
+        }
+      });
+    });
+    ctx.globalAlpha = 1;
+    if (previewRevision === store.revision) preview.limbs.forEach((limb, i) => { if (preview.residuals[i] > .0001 && preview.targets[i]) line(project(preview.sites[i]), project(preview.targets[i]), '#b45e39', 2, [4, 4]); });
+  }
   function draw() {
     if (!width || !height) return;
     const route = currentRoute(), endpoints = endpointMap(route), holds = holdsByName(route), assigned = E.assignments(route, mode === 'moves');
@@ -112,39 +141,28 @@
     for (let x = Math.floor(min[0] / grid) * grid; x <= max[0]; x += grid) { const p = project([x, 0, 0]); line({x: p.x, y: 0}, {x: p.x, y: height}, Math.abs(x % 1) < .001 ? '#cfd6c8' : '#dce1d5', .7); }
     for (let z = Math.floor(min[2] / grid) * grid; z <= max[2]; z += grid) { const p = project([0, 0, z]); line({x: 0, y: p.y}, {x: width, y: p.y}, Math.abs(z % 1) < .001 ? '#cfd6c8' : '#dce1d5', .7); if (p.y > 110 && p.y < height - 45) { ctx.font = '9px ui-monospace, monospace'; ctx.fillStyle = '#8c9988'; ctx.fillText(`${z.toFixed(2)} m`, 18, p.y - 5); } }
     $('planner-scale').textContent = `${grid} m GRID`;
-    // This deliberately schematic figure depicts contacts, not inverse kinematics.
-    const handX = (endpoints.left_hand[0] + endpoints.right_hand[0]) / 2, footX = (endpoints.left_foot[0] + endpoints.right_foot[0]) / 2;
-    const handZ = (endpoints.left_hand[2] + endpoints.right_hand[2]) / 2, footZ = (endpoints.left_foot[2] + endpoints.right_foot[2]) / 2;
-    const hip = [(handX + footX) / 2, .05, footZ + .45], shoulder = [handX * .6 + footX * .4, .05, Math.max(footZ + .72, handZ - .22)];
-    const hipP = project(hip), shoulderP = project(shoulder);
-    line(hipP, shoulderP, '#c3cdbf', clamp(s * .14, 16, 42)); line(hipP, shoulderP, '#859b8c', 1, [4, 4]);
-    circle(project([shoulder[0], .05, shoulder[2] + .16]), clamp(s * .075, 12, 24), '#d4dccd', '#99aa97');
-    E.LIMBS.forEach(limb => {
-      const side = limb.startsWith('left') ? -1 : 1, upper = limb.endsWith('hand'), base = upper ? shoulder : hip;
-      const origin = project([base[0] + side * (upper ? .13 : .09), .05, base[2]]), end = project(endpoints[limb]);
-      const mid = {x: (origin.x + end.x) / 2 + side * Math.min(22, s * .055), y: (origin.y + end.y) / 2 + (upper ? 22 : -5)};
-      line(origin, mid, '#a9bbaa', clamp(s * .04, 5, 12)); line(mid, end, '#a9bbaa', clamp(s * .035, 4, 10)); circle(mid, 3, '#f0f1e8', '#8da08d');
-    });
+    drawPreview(s);
     // The planned move path connects successive hold locations for each limb.
     const previous = {...route.start}; route.moves.forEach((move, index) => {
       const a = project(holds[previous[move.limb]].pos), b = project(holds[move.hold].pos); previous[move.limb] = move.hold;
-      line(a, b, colors[move.limb] + '77', 1.5, [3, 4]);
+      line(a, b, colors[move.limb], index === route.moves.length - 1 ? 3 : 1.5, [4, 5]);
       const offset = move.limb.startsWith('left') ? -1 : 1;
-      ctx.fillStyle = colors[move.limb]; ctx.font = '8px ui-monospace, monospace'; ctx.textAlign = offset < 0 ? 'right' : 'left'; ctx.fillText(String(index + 1), b.x + offset * 14, b.y - 9);
+      ctx.fillStyle = colors[move.limb]; ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = offset < 0 ? 'right' : 'left'; ctx.fillText(`Move ${index + 1}`, b.x + offset * 25, b.y - 15);
     }); ctx.textAlign = 'left';
     route.holds.forEach(hold => {
       const p = project(hold.pos), selected = hold.name === selectedHold, attached = E.LIMBS.filter(l => assigned[l] === hold.name), radius = clamp((hold.radius ?? E.DEFAULTS[hold.type].radius) * s, 5, 24);
       if (selected) circle(p, Math.max(13, radius + 4), '#ffffff55', '#365b50', 1.5);
       if (attached.length) circle(p, 11, null, colors[attached[0]] + '88', 1.5);
       circle({x: p.x + 1, y: p.y + 2}, 7, '#344a3d20');
-      circle(p, hold.type === 'foothold' ? 5.5 : 7, holdColors[hold.type], '#69806b', .8);
+      circle(p, hold.type === 'foothold' ? 9 : 12, holdColors[hold.type], '#57705e', 1.2);
       circle({x: p.x - 1.5, y: p.y - 1.5}, 1.5, '#f8f5e9aa');
-      if (selected) { ctx.fillStyle = '#345748'; ctx.font = '10px ui-monospace, monospace'; const left = p.x > width * .7; ctx.textAlign = left ? 'right' : 'left'; ctx.fillText(hold.name, p.x + (left ? -19 : 19), p.y - 11); ctx.textAlign = 'left'; }
+      if (!Object.values(route.start).includes(hold.name)) { ctx.fillStyle = '#fffdf1'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(holdLabel(route, hold.name).replace('Hold ', ''), p.x, p.y + 4); ctx.textAlign = 'left'; }
     });
     E.LIMBS.forEach(limb => {
       const p = project(endpoints[limb]), h = handlePoint(limb, endpoints[limb]), selected = selectedLimb === limb && tool === 'limbs';
-      line(p, h, colors[limb] + '99', 1, [2, 3]); circle(h, selected ? 16 : 14, selected ? colors[limb] : '#f6f5eb', colors[limb], selected ? 2 : 1.4);
-      ctx.fillStyle = selected ? '#fffdf1' : colors[limb]; ctx.font = 'bold 9px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillText(initials[limb], h.x, h.y + 3); ctx.textAlign = 'left';
+      line(p, h, colors[limb] + '99', 1, [2, 3]); circle(h, 18, selected ? colors[limb] : '#fffdf4', colors[limb], selected ? 2.5 : 1.5);
+      ctx.fillStyle = selected ? '#fffdf1' : colors[limb]; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(initials[limb], h.x, h.y + 3); ctx.textAlign = 'left';
+      ctx.fillStyle = '#365345'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = limb.startsWith('left') ? 'right' : 'left'; ctx.fillText(names[limb], h.x + (limb.startsWith('left') ? -25 : 25), h.y + 4); ctx.textAlign = 'left';
     });
     if (drag?.kind === 'limb') {
       const start = handlePoint(drag.limb, endpoints[drag.limb]), target = nearestHold(drag.point, route, 25);
@@ -163,18 +181,14 @@
   canvas.addEventListener('pointerdown', event => {
     if (event.button !== 0) return; const point = mouse(event), route = store.route, endpoints = endpointMap(route);
     canvas.setPointerCapture(event.pointerId);
-    if (tool === 'limbs') {
-      const limb = E.LIMBS.find(l => { const h = handlePoint(l, endpoints[l]); return Math.hypot(h.x - point.x, h.y - point.y) < 19; });
-      if (limb) { selectedLimb = limb; drag = {kind: 'limb', limb, point}; renderControls(); draw(); return; }
-      const hold = nearestHold(point, route); if (hold) { drag = {kind: 'assign', hold: hold.name, point}; return; }
-    } else {
-      const hold = nearestHold(point, route); if (hold) { selectedHold = hold.name; drag = {kind: 'hold', hold: hold.name, route, point}; renderControls(); draw(); return; }
-    }
+    const limb = E.LIMBS.find(l => { const h = handlePoint(l, endpoints[l]); return Math.hypot(h.x - point.x, h.y - point.y) < 22; });
+    if (limb) { selectedLimb = limb; drag = {kind: 'limb', limb, point}; renderControls(); draw(); return; }
+    const hold = nearestHold(point, route, 18); if (hold) { selectedHold = hold.name; drag = {kind: 'hold', hold: hold.name, route, point}; renderControls(); draw(); return; }
     drag = {kind: 'pan', point, x: camera.x, z: camera.z};
   });
   canvas.addEventListener('pointermove', event => {
     const point = mouse(event);
-    if (!drag) { canvas.style.cursor = nearestHold(point, store.route) ? (tool === 'holds' ? 'grab' : 'pointer') : 'default'; return; }
+    if (!drag) { const endpoints = endpointMap(store.route); canvas.style.cursor = nearestHold(point, store.route) || E.LIMBS.some(l => {const p = handlePoint(l,endpoints[l]); return Math.hypot(point.x-p.x,point.y-p.y)<22;}) ? 'grab' : 'default'; return; }
     if (drag.kind === 'hold') {
       const hold = drag.route.holds.find(h => h.name === drag.hold), position = unproject(point), snap = $('snap-grid').checked ? .01 : .001;
       hold.pos[0] = clamp(Math.round(position[0] / snap) * snap, -3, 3); hold.pos[2] = clamp(Math.round(position[2] / snap) * snap, .05, 5);
@@ -186,7 +200,6 @@
   canvas.addEventListener('pointerup', event => {
     if (!drag) return; const ended = drag; drag = null;
     if (ended.kind === 'hold') commit(ended.route);
-    else if (ended.kind === 'assign') assign(selectedLimb, ended.hold);
     else if (ended.kind === 'limb') { const target = nearestHold(mouse(event), store.route, 25); if (target) assign(ended.limb, target.name); else setStatus('Choose a hold', 'Drop the limb on a hold. Its previous assignment has been kept.'); }
     draw();
   });
@@ -200,15 +213,15 @@
       edit(r => { const h = r.holds.find(h => h.name === selectedHold), axis = /Left|Right/.test(event.key) ? 0 : 2; h.pos[axis] = Number((h.pos[axis] + (/Right|Up/.test(event.key) ? amount : -amount)).toFixed(3)); });
     }
   });
-  $('editor-tab').addEventListener('click', () => showTab('editor')); $('replay-tab').addEventListener('click', () => showTab('replay'));
+  $('editor-tab').addEventListener('click', () => showTab('editor')); $('replay-tab').addEventListener('click', () => showTab('replay')); $('back-to-editor').addEventListener('click', () => showTab('editor'));
   $('tool-holds').addEventListener('click', () => { tool = 'holds'; renderControls(); draw(); }); $('tool-limbs').addEventListener('click', () => { tool = 'limbs'; renderControls(); draw(); });
   $('mode-start').addEventListener('click', () => setMode('start')); $('mode-moves').addEventListener('click', () => setMode('moves'));
   $('planner-fit').addEventListener('click', fit);
   $('editor-template').replaceChildren(...templates.map((t, i) => { const n = make('option', '', t.name); n.value = i; return n; }));
-  $('editor-template').addEventListener('change', e => { store.replace(e.target.value === 'imported' ? importedRoute : templates[Number(e.target.value)].route); selectedHold = store.route.holds[0].name; invalidate(); renderControls(); fit(); });
+  $('editor-template').addEventListener('change', e => { store.replace(e.target.value === 'imported' ? importedRoute : templates[Number(e.target.value)].route); selectedHold = store.route.holds[0].name; mode = 'moves'; invalidate(); renderControls(); fit(); schedulePreview(); });
   $('editor-name').addEventListener('change', e => edit(r => { r.name = e.target.value.trim(); }));
-  $('editor-undo').addEventListener('click', () => { store.undo(); invalidate(); renderControls(); draw(); });
-  $('editor-reset').addEventListener('click', () => { store.reset(); invalidate('Template restored. Run a fresh simulation, or continue editing.'); renderControls(); fit(); });
+  $('editor-undo').addEventListener('click', () => { store.undo(); invalidate(); renderControls(); draw(); schedulePreview(); });
+  $('editor-reset').addEventListener('click', () => { store.reset(); mode = 'moves'; invalidate('Wall restored. Drag a limb to start a new sequence.'); renderControls(); fit(); schedulePreview(); });
   $('clear-moves').addEventListener('click', () => edit(r => { r.moves = []; }));
   $('selected-hold').addEventListener('change', e => { selectedHold = e.target.value; renderControls(); draw(); });
   $('assignment-target').addEventListener('change', e => { selectedHold = e.target.value; renderControls(); draw(); });
@@ -231,10 +244,10 @@
     try {
       if (file.size > 128 * 1024) throw new Error('Choose a route JSON under 128 KiB. Trajectory files belong in the replay workflow.');
       const route = E.validate(JSON.parse(await file.text())); store.replace(route); importedRoute = E.clone(route);
-      selectedHold = route.holds[0].name; selectedLimb = 'left_hand'; mode = 'start'; tool = 'holds';
+      selectedHold = route.holds[0].name; selectedLimb = 'left_hand'; mode = 'moves'; tool = 'limbs';
       const existing = $('editor-template').querySelector('[data-imported]'); if (existing) existing.remove();
       const option = make('option', '', `${route.name} · imported`); option.value = 'imported'; option.dataset.imported = 'true'; $('editor-template').append(option); $('editor-template').value = 'imported';
-      invalidate(`Loaded ${file.name}. Run a fresh simulation to test this route.`); renderControls(); fit();
+      invalidate(`Loaded ${file.name}. Run a fresh simulation to test this route.`); renderControls(); fit(); schedulePreview();
     } catch (error) { setStatus('Could not import this route', error instanceof SyntaxError ? 'The file is not valid JSON. Export a route from this editor, then try importing it.' : error.message, 'error'); }
     finally { event.target.value = ''; }
   });
@@ -243,6 +256,34 @@
     if (input) { const url = new URL(input); if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Use an http or https simulator URL.'); if (url.username || url.password || url.search || url.hash) throw new Error('Use the simulator base URL without credentials, query parameters or a fragment.'); return input + path; }
     if (location.protocol === 'file:') throw new Error('Open the local app at http://127.0.0.1:8765, or enter a hosted simulator URL in Simulator connection.');
     return path;
+  }
+  function schedulePreview() {
+    clearTimeout(previewTimer); previewController?.abort(); previewRevision = -1;
+    $('preview-status').textContent = 'Updating body pose… faded geometry is the previous pose. This checks reach only, not grip or stability.';
+    draw();
+    const revision = store.revision, requestedMode = mode;
+    previewTimer = setTimeout(async () => {
+      const controller = new AbortController(); previewController = controller;
+      const timer = setTimeout(() => controller.abort(), 20000), route = store.route;
+      route.start = E.assignments(route, mode === 'moves'); route.moves = [];
+      try {
+        const response = await fetch(endpoint('/api/preview'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({route}), signal: controller.signal});
+        const data = await response.json(), p = data.preview;
+        if (!response.ok || !p) throw new Error(data.error || 'Pose preview unavailable');
+        window.ClimbGeometry.validateTrajectory({...p, route: 'Pose preview', success: false, frames: [{t: 0, pos: p.pos, quat: p.quat}], outcomes: []});
+        if (p.limbs?.length !== 4 || p.sites?.length !== 4 || p.targets?.length !== 4 || p.residuals?.length !== 4 || !Number.isFinite(p.maxResidualM) || p.residuals.some(n => !Number.isFinite(n)) || p.sites.some(v => !Array.isArray(v) || v.length !== 3 || !v.every(Number.isFinite)) || p.targets.some(v => v !== null && (!Array.isArray(v) || v.length !== 3 || !v.every(Number.isFinite)))) throw new Error('Invalid pose preview');
+        if (revision !== store.revision || requestedMode !== mode || controller.signal.aborted) return;
+        preview = p; previewRevision = revision;
+        const gap = p.maxResidualM < .01 ? `${(p.maxResidualM * 1000).toFixed(1)} mm` : `${(p.maxResidualM * 100).toFixed(1)} cm`;
+        const poseName = mode === 'moves' && store.route.moves.length ? 'Planned end pose' : 'Starting body pose';
+        $('preview-status').textContent = p.converged ? `${poseName} found. This checks reach only; test the move to check motion, grip and stability.` : `The pose solver cannot match all contacts. Largest gap: ${gap}. Large gaps appear as dashed links; small errors may not be visible. Try closer holds.`;
+        $('preview-status').classList.toggle('preview-warning', !p.converged); draw();
+      } catch {
+        if (revision !== store.revision || requestedMode !== mode || controller !== previewController) return;
+        $('preview-status').textContent = 'Body preview unavailable. Faded geometry is the previous pose; markers show your intended contacts. You can still edit and run the simulation.';
+        $('preview-status').classList.add('preview-warning'); draw();
+      } finally { clearTimeout(timer); }
+    }, 300);
   }
   async function checkConnection() {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000);
@@ -256,33 +297,39 @@
     finally { clearTimeout(timer); }
   }
   $('save-connection').addEventListener('click', () => {
-    simulatorUrl = $('simulator-url').value.trim(); try { endpoint('/api/health'); try { localStorage.setItem('ascent.simulatorUrl', simulatorUrl); } catch {} checkConnection(); }
+    simulatorUrl = $('simulator-url').value.trim(); try { endpoint('/api/health'); try { localStorage.setItem('ascent.simulatorUrl', simulatorUrl); } catch {} checkConnection(); schedulePreview(); }
     catch (error) { $('connection-status').textContent = error.message; }
   });
   $('run-simulation').addEventListener('click', async () => {
     if (busy) return;
-    const token = store.beginRun(), request = ++runId, controller = new AbortController(); let timer;
+    const token = store.beginRun(), request = ++runId, controller = new AbortController(), started = Date.now(); let timer, elapsedTimer;
     try {
-      E.validate(token.route); const url = endpoint('/api/simulate'); busy = true; $('run-simulation').disabled = true; $('run-simulation').querySelector('span').textContent = 'Simulating…'; $('view-result').hidden = true;
-      setStatus('Running your route in MuJoCo', 'Solving the starting pose, then checking each transition, support force and grip constraint. This can take a minute.', 'running');
+      E.validate(token.route); const url = endpoint('/api/simulate'); busy = true; $('run-example').disabled = true; $('run-simulation').disabled = true; $('run-simulation').querySelector('span').textContent = 'Simulating…'; $('view-result').hidden = true;
+      const showElapsed = () => { if (token.revision === store.revision) setStatus(`Simulating · ${Math.floor((Date.now() - started) / 1000)}s elapsed`, 'Calculating the body motion and contact forces. The animation starts when the result is ready.', 'running'); };
+      showElapsed(); elapsedTimer = setInterval(showElapsed, 1000);
       timer = setTimeout(() => controller.abort(), 180000);
       const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({route: token.route, frameEvery: 20}), signal: controller.signal});
       let data; try { data = await response.json(); } catch { throw new Error('No simulator API is available here. Open Simulator connection to connect the local app or a hosted server.'); }
       if (!response.ok) throw new Error(data.error || (response.status === 429 ? 'The simulator is busy. Try again when the current run finishes.' : 'The simulator could not run this route.'));
       if (!data.trajectory || typeof data.trajectory.success !== 'boolean') throw new Error('The simulator returned no valid trajectory.');
       if (request !== runId || token.revision !== store.revision) { setStatus('Edits kept, older result discarded', 'The route changed while the simulation was running. Run again to test the current version.'); return; }
-      window.ClimbReplay.loadTrajectory(data.trajectory);
+      window.ClimbReplay.loadTrajectory(data.trajectory, {autoplay: true});
       store.accept(token, data.trajectory);
-      const failure = data.trajectory.outcomes?.find(o => !o.passed);
-      setStatus(data.trajectory.success ? 'Model/controller completed' : 'This attempt did not complete', data.trajectory.success ? 'Your edited sequence passed the configured checks. Inspect the motion, grip loads and wall-clearance limitations in the replay.' : (failure?.reason || 'Inspect the execution trace to see where the controller stopped.'), data.trajectory.success ? 'passed' : 'failed');
-      $('view-result').hidden = false; showTab('replay'); $('replay-stage').scrollIntoView({block: 'start'});
+      const result = E.describeResult(data.trajectory); setStatus(result.title, result.text, result.kind);
+      $('replay-tab').disabled = false; $('view-result').hidden = false; showTab('replay');
     } catch (error) {
       if (request !== runId || token.revision !== store.revision) { setStatus('Edits kept, older result discarded', 'The previous run ended after the route changed. Run again to test the current version.'); return; }
       setStatus('Simulation unavailable', error.name === 'AbortError' ? 'The request timed out. The server may still be finishing its run. Try again shortly.' : error.message === 'Failed to fetch' || error instanceof TypeError ? 'Could not reach the Python simulator. Check Simulator connection, then run again. Your edits are saved in this tab.' : error.message, 'error');
       if (error instanceof TypeError) $('connection-label').textContent = 'Connect simulator';
-    } finally { clearTimeout(timer); busy = false; $('run-simulation').disabled = false; $('run-simulation').querySelector('span').textContent = 'Run simulation'; }
+    } finally { clearTimeout(timer); clearInterval(elapsedTimer); busy = false; $('run-example').disabled = false; $('run-simulation').disabled = false; renderControls(); }
+  });
+  $('run-example').addEventListener('click', () => {
+    if (busy) return;
+    const route = E.clone(starter); route.moves = [{limb: 'left_hand', hold: 'target_left'}];
+    store.replace(starter); store.commit(route); mode = 'moves'; selectedLimb = 'left_hand'; selectedHold = 'target_left'; $('editor-template').value = '0';
+    invalidate(); renderControls(); fit(); schedulePreview(); $('run-simulation').click();
   });
   $('view-result').addEventListener('click', () => showTab('replay'));
   new ResizeObserver(resize).observe(canvas.parentElement);
-  renderControls(); resize(); fit(); checkConnection();
+  renderControls(); resize(); fit(); checkConnection(); schedulePreview();
 })();
