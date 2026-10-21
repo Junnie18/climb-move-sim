@@ -11,9 +11,11 @@ offline still supports route editing and recorded replays.
    the fresh replay starts automatically. Inspect the changing support loads.
 2. Return to the editor. Drag a target hand hold much higher. The previous
    verdict is cleared immediately. Run again and inspect the returned failure.
-3. Reset the route, then drag a hand handle onto a nearby target. The explicit
-   move list is what will be simulated. Advanced starting-contact controls
-   instead change the initial stance. A zero-move test checks that stance.
+3. Reset the route, then drag a hand handle onto a nearby target. Choose
+   **Test this pose** to check support at the displayed contacts. Return to
+   editing and choose **Test moves** to check the transition from the original
+   stance. The pose check preserves the move list. These answer different
+   questions: a supported destination does not guarantee a solved transition.
 4. Show grip capacity and friction in the hold inspector. Explain that reaching
    a point is only part of the problem: the remaining contacts must support the
    body, and the arriving limb must establish a valid contact.

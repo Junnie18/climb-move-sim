@@ -59,22 +59,29 @@
     const a = route.holds.find(h => h.name === previous[move.limb]).pos, b = route.holds.find(h => h.name === move.hold).pos;
     return Math.hypot(...a.map((value, i) => value - b[i]));
   }
-  function describeResult(data) {
+  function resultDetail(data) {
     const failure = data.outcomes?.find(o => !o.passed), category = failure?.detail?.category;
     const hasMoves = data.routeDefinition ? data.routeDefinition.moves.length > 0 : data.outcomes?.some(o => o.phase !== 'initialization' && o.move !== '(starting stance)');
+    if (data.success && data.checkType === 'pose') return {title: 'This pose held in the model', text: 'The simulated climber held the tested contacts through the settling check. No moves were tested. Test the move sequence separately to see whether this controller can get there.', kind: 'passed'};
     if (data.success) return {title: hasMoves ? 'The model completed your moves' : 'The starting stance held', text: hasMoves ? 'The simulated climber passed the configured movement, contact and grip checks. Watch the motion below. This is a simplified model, not a guarantee for a human climber.' : 'The simulated climber held its four starting contacts through the settling check. No climbing moves were tested. Add a move to test a reach.', kind: 'passed'};
-    if (category === 'numerical_instability') return {title: 'The simulation became unstable', text: 'Reset the wall or try a smaller change. This is a numerical failure, not a physical feasibility verdict.', kind: 'failed'};
-    if (category === 'initial_ik_nonconvergence') return {title: 'No starting body pose was found', text: 'Move the starting holds closer together or reset the wall. The pose solver could not match all four starting contacts; stability has not been tested.', kind: 'failed'};
-    if (failure?.phase === 'initialization') return {title: 'The starting pose did not hold', text: 'Try moving the starting holds closer to their original positions, or reset the wall. The model could not establish a stable starting stance.', kind: 'failed'};
-    if (category === 'geometric_reach_limit') return {title: 'That hold is out of reach from this stance', text: 'Move the target closer to the hand or foot, then test again. The other contacts stay fixed during this reach.', kind: 'failed'};
-    if (category === 'ik_nonconvergence') return {title: 'No suitable body pose was found', text: 'Move the target closer or adjust the other contacts. The pose solver stopped; this does not prove that a person cannot make the move.', kind: 'failed'};
-    if (category === 'grip_strength_exceeded') return {title: 'A grip could not support the load', text: 'Try a closer target or change the hold’s grip strength in Advanced settings. The calculated force exceeded the configured grip limit.', kind: 'failed'};
+    if (category === 'numerical_instability') return {title: 'The simulation became unstable', text: 'This is a numerical failure, not a physical feasibility verdict. Reset the wall or adjust the contacts and try again.', kind: 'unresolved'};
+    if (category === 'initial_ik_nonconvergence') return {title: data.checkType === 'pose' ? 'No matching body position was found' : 'No starting body pose was found', text: 'The pose solver could not match all four contacts; stability has not been tested. Adjust the contacts and try again. This does not prove the pose is impossible for a person.', kind: 'unresolved'};
+    if (category === 'ik_nonconvergence') return {title: failure?.phase === 'initialization' ? 'No starting body pose was found' : 'No suitable body pose was found', text: 'The pose solver stopped without finding a solution. This does not prove that a person cannot make the move. Use Test this pose to check the final contacts separately.', kind: 'unresolved'};
+    if (category === 'geometric_reach_limit') return {title: 'The controller could not plan this reach', text: 'The target exceeds the limb’s reach with the torso fixed in its current position. A body shift may make it reachable. Use Test this pose to check the end position separately.', kind: 'unresolved'};
+    if (failure?.phase === 'initialization') return {title: data.checkType === 'pose' ? 'The model did not hold this pose' : 'The model did not hold the starting pose', text: 'The simulated body lost support during settling. This is a result for this controller and its grip assumptions, not proof that the position is impossible for a person. Adjust the contacts and test again.', kind: 'failed'};
+    if (category === 'grip_strength_exceeded') return {title: 'A model grip exceeded its load limit', text: 'The calculated force exceeded the configured grip strength. Try a closer target or review the hold’s grip limit in Advanced settings. This result uses the model’s strength assumptions.', kind: 'failed'};
     if (category === 'contact_cone_exceeded') {
       const limb = failure.detail?.limb?.replace(/_/g, ' '), contact = limb ? `the ${limb}` : 'a contact';
-      return {title: failure.phase === 'settle' ? `The hold was reached, then support failed at ${contact}` : `The model lost support at ${contact}`, text: 'The contact needed force in a direction that its friction constraint could not support. Try a smaller move or adjust the starting stance.', kind: 'failed'};
+      return {title: failure.phase === 'settle' ? `The hold was reached, then support failed at ${contact}` : `The model lost support at ${contact}`, text: 'The simulated contact needed force outside its friction constraint. This controller did not maintain support; a different body position or movement strategy may work.', kind: 'failed'};
     }
     if (category === 'contact_not_reached') return {title: 'The limb did not settle onto the hold', text: 'The controller could not reach the target closely and slowly enough to attach. Bring the target closer and test again.', kind: 'failed'};
     return {title: 'The model stopped before finishing', text: 'Try a smaller move. The detailed diagnostic below explains which controller check stopped this attempt.', kind: 'failed'};
+  }
+  function describeResult(data) {
+    const result = resultDetail(data);
+    if (data.checkType !== 'pose') return result;
+    const label = data.poseScope === 'final' ? 'Final pose' : data.poseScope === 'starting' ? 'Starting pose' : 'Tested pose';
+    return {...result, title: data.success ? `${label} held in the model` : `${label}: ${result.title[0].toLowerCase()}${result.title.slice(1)}`};
   }
   function create(route) {
     validate(route);

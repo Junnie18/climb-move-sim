@@ -62,3 +62,25 @@ test('result explanations distinguish unreachable targets, grip failures, and pl
   assert.match(E.describeResult({success: false, outcomes: [{passed: false, phase: 'initialization', detail: {category: 'numerical_instability'}}]}).text, /numerical failure/i);
   assert.match(E.describeResult({success: true, outcomes: [{passed: true, move: '(starting stance)', phase: 'initialization'}]}).text, /No climbing moves were tested/);
 });
+
+test('planner failures stay unresolved instead of declaring a human move physically impossible', () => {
+  for (const category of ['geometric_reach_limit', 'ik_nonconvergence', 'initial_ik_nonconvergence', 'numerical_instability']) {
+    const explanation = E.describeResult({success: false, outcomes: [{passed: false, phase: 'planning', detail: {category}}]});
+    assert.equal(explanation.kind, 'unresolved', category);
+  }
+  const reach = E.describeResult({success: false, outcomes: [{passed: false, phase: 'reachability', detail: {category: 'geometric_reach_limit'}}]});
+  assert.match(reach.text, /torso|body shift/i);
+  assert.match(reach.text, /pose/i);
+});
+
+test('every pose result identifies the tested starting or final contacts independently of editor view', () => {
+  for (const [poseScope, label] of [['starting', 'Starting pose'], ['final', 'Final pose']]) {
+    const success = E.describeResult({success: true, checkType: 'pose', poseScope, outcomes: []});
+    assert.ok(success.title.startsWith(label));
+    assert.doesNotMatch(success.text, /displayed contacts/i);
+    for (const category of ['initial_ik_nonconvergence', 'numerical_instability', 'grip_strength_exceeded', 'contact_cone_exceeded']) {
+      const failure = E.describeResult({success: false, checkType: 'pose', poseScope, outcomes: [{passed: false, phase: 'initialization', detail: {category}}]});
+      assert.ok(failure.title.startsWith(label), category);
+    }
+  }
+});

@@ -27,6 +27,12 @@ REACH_TOL = 0.002
 INITIAL_POSE_TOL = 0.0001
 CONTACT_DISTANCE_M = 0.012
 CONTACT_SPEED_M_S = 0.12
+# A shoe or ungraspable surface must finish decelerating before touchdown.
+# Attaching these unilateral contacts at hand-grasp speeds creates a braking
+# impulse that can exceed the friction cone even when the final stance is
+# supported. This is a stricter controller acquisition criterion, not a change
+# to the physical slip/force limits checked on every attached sample.
+UNILATERAL_CONTACT_SPEED_M_S = 0.02
 REPLAN_S = 0.1
 COMMAND_SPEED_RAD_S = 1.2
 COMMAND_ACCEL_RAD_S2 = 4.0
@@ -322,6 +328,9 @@ def attempt_route(route: Route, renderer=None, frame_every: int = 15, *,
         target_hold = route.hold(move.hold)
         target_pos = np.asarray(target_hold.pos, dtype=float)
         contact_distance = min(CONTACT_DISTANCE_M, target_hold.radius)
+        contact_speed = (min(CONTACT_SPEED_M_S, UNILATERAL_CONTACT_SPEED_M_S)
+                         if limb.endswith("_foot") or target_hold.type in FRICTION_GATED_TYPES
+                         else CONTACT_SPEED_M_S)
         base_distance = float(np.linalg.norm(target_pos - _limb_base_pos(cm, limb)))
         distance = float(np.linalg.norm(target_pos - cm.limb_site_pos(limb)))
         max_reach = _max_reach(limb)
@@ -374,7 +383,7 @@ def attempt_route(route: Route, renderer=None, frame_every: int = 15, *,
             if failure is not None:
                 break
             distance, speed = _contact_state(cm, limb, target_pos)
-            if distance <= contact_distance and speed <= CONTACT_SPEED_M_S:
+            if distance <= contact_distance and speed <= contact_speed:
                 arrived = True
                 break
         if failure is not None:
@@ -387,7 +396,7 @@ def attempt_route(route: Route, renderer=None, frame_every: int = 15, *,
             finish_failure(MoveOutcome(move, False, "dynamic",
                 f"controller did not arrive at '{move.hold}' within the contact distance/speed limits",
                 dict(category="contact_not_reached", distance_m=distance, speed_m_s=speed,
-                     distance_limit_m=contact_distance, speed_limit_m_s=CONTACT_SPEED_M_S,
+                     distance_limit_m=contact_distance, speed_limit_m_s=contact_speed,
                      ik_residual_m=ik.residual_m)), move_index)
             break
 
@@ -423,7 +432,8 @@ def attempt_route(route: Route, renderer=None, frame_every: int = 15, *,
         result.outcomes.append(MoveOutcome(move, True, "settle",
             f"{limb} reached and held '{move.hold}'",
             dict(ik_residual_m=ik.residual_m, arrival_distance_m=distance,
-                 arrival_speed_m_s=speed, contact_radius_m=contact_distance, category="completed")))
+                 arrival_speed_m_s=speed, speed_limit_m_s=contact_speed,
+                 contact_radius_m=contact_distance, category="completed")))
     if result.success:
         emit("complete", len(route.moves) - 1, force_capture=True)
     return result
