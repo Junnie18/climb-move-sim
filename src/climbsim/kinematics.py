@@ -1,10 +1,9 @@
 """Numerical inverse kinematics for one limb at a time, via a damped-least-
 squares Jacobian solve against the actual compiled MuJoCo model -- not a
 closed-form approximation, so it automatically respects the model's real
-joint axes, offsets and limits. Doubles as the kinematic-reachability check
-(6a in the feasibility pipeline): if the solve can't converge within the
-limb's joint ranges, the hold is not reachable from the current anchor
-configuration, independent of dynamics.
+joint axes, offsets and limits. A converged solve provides a candidate
+reach in the current torso configuration; numerical non-convergence leaves
+reachability unresolved and is not a proof of physical impossibility.
 """
 
 from dataclasses import dataclass
@@ -27,8 +26,8 @@ def solve_ik(cm, limb: str, target_pos, tol=0.015, max_iters=300, damping=0.15, 
              seed_q=None) -> IKResult:
     """Solve for `limb`'s joint angles that bring its grip site to `target_pos`,
     holding every other DOF (torso free joint + other three limbs) fixed at
-    its current qpos. Modifies `cm.data` in place (caller's responsibility to
-    snapshot/restore qpos if needed) and leaves qpos set to the solution.
+    its current qpos. Planning uses isolated MjData; live positions, velocities
+    and derived dynamics caches are never changed.
 
     `seed_q`, if given, is the starting joint configuration (defaults to the
     limb's current qpos). A single damped-least-squares run can stall at a
@@ -36,7 +35,9 @@ def solve_ik(cm, limb: str, target_pos, tol=0.015, max_iters=300, damping=0.15, 
     where the Jacobian has almost no response left along the reach direction
     -- so `solve_ik_best` below retries from alternate seeds when this stalls.
     """
-    model, data = cm.model, cm.data
+    model = cm.model
+    data = mujoco.MjData(model)
+    data.qpos[:] = cm.data.qpos
     qadr = cm.limb_joint_qpos_adr[limb]
     dofadr = cm.limb_joint_dof_adr[limb]
     site_id = cm.limb_site_id[limb]
@@ -53,6 +54,7 @@ def solve_ik(cm, limb: str, target_pos, tol=0.015, max_iters=300, damping=0.15, 
         for a, v in zip(qadr, q):
             data.qpos[a] = v
         mujoco.mj_kinematics(model, data)
+        mujoco.mj_comPos(model, data)
         pos = data.site_xpos[site_id]
         err = target - pos
         residual = float(np.linalg.norm(err))
@@ -82,7 +84,7 @@ def solve_ik_best(cm, limb: str, target_pos, tol=0.015, n_random_seeds=14, rng=N
     """Multi-start wrapper around `solve_ik`: tries the limb's current pose,
     then its neutral bind pose, then a handful of random within-range seeds,
     keeping the best (lowest-residual) result. Stops early once a seed
-    reaches `tol`. Leaves `cm.data` set to the returned result's solution.
+    reaches `tol`. Live simulation state is left unchanged.
     """
     rng = rng or np.random.default_rng(0)
     joint_names = LIMB_JOINTS[limb]
@@ -114,9 +116,6 @@ def solve_ik_best(cm, limb: str, target_pos, tol=0.015, n_random_seeds=14, rng=N
         if res.reached:
             break
 
-    for a, v in zip(cm.limb_joint_qpos_adr[limb], best.q):
-        cm.data.qpos[a] = v
-    mujoco.mj_kinematics(cm.model, cm.data)
     return best
 
 
@@ -149,6 +148,7 @@ def solve_pose_ik(cm, limb_targets: dict, tol=0.008, max_iters=200, damping=0.1,
     residual = np.inf
     for _ in range(max_iters):
         mujoco.mj_kinematics(model, data)
+        mujoco.mj_comPos(model, data)
         errs, jrows = [], []
         for limb, target in limb_targets.items():
             site_id = cm.limb_site_id[limb]

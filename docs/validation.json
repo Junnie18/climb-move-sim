@@ -1,0 +1,223 @@
+{
+  "purpose": "Timestep sensitivity of deterministic synthetic scenarios; not real-world validation",
+  "reference": "last timestep in --timesteps (default finest: 0.0005s)",
+  "records": [
+    {
+      "route": "data/routes/showcase/01_supported_steps.json",
+      "runs": [
+        {
+          "timestep_s": 0.002,
+          "success": true,
+          "category": "completed",
+          "reason": "all requested moves completed",
+          "end_time_s": 16.658,
+          "final_com_m": [
+            -0.0003219448364104165,
+            0.4387626024233775,
+            1.6067204327586955
+          ],
+          "peak_force_n": [
+            338.5195514045058,
+            350.2547820367899,
+            596.281262458918,
+            616.9559341753315
+          ],
+          "minimum_wall_clearance_m": -0.06703097898626828,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 1.4917526017529986e-05,
+          "end_time_delta_from_finest_s": -0.007999999999999119
+        },
+        {
+          "timestep_s": 0.001,
+          "success": true,
+          "category": "completed",
+          "reason": "all requested moves completed",
+          "end_time_s": 16.662,
+          "final_com_m": [
+            -0.00032248306830337287,
+            0.43876969227789797,
+            1.6067142250430944
+          ],
+          "peak_force_n": [
+            338.58304568135816,
+            350.2609185450244,
+            596.4593657603244,
+            616.9579747625212
+          ],
+          "minimum_wall_clearance_m": -0.06703029493862728,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 5.663420977301903e-06,
+          "end_time_delta_from_finest_s": -0.004000000000001336
+        },
+        {
+          "timestep_s": 0.0005,
+          "success": true,
+          "category": "completed",
+          "reason": "all requested moves completed",
+          "end_time_s": 16.666,
+          "final_com_m": [
+            -0.0003234641136485829,
+            0.4387747957979907,
+            1.6067119742721465
+          ],
+          "peak_force_n": [
+            338.5857533088424,
+            350.2637625768998,
+            596.453202866016,
+            616.9596799682158
+          ],
+          "minimum_wall_clearance_m": -0.0670300749433019,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 0.0,
+          "end_time_delta_from_finest_s": 0.0
+        }
+      ],
+      "classification_agrees": true
+    },
+    {
+      "route": "data/routes/showcase/02_unreachable.json",
+      "runs": [
+        {
+          "timestep_s": 0.002,
+          "success": false,
+          "category": "geometric_reach_limit",
+          "reason": "'rh_dyno' exceeds right_hand's maximum extension from the current stance",
+          "end_time_s": 3.0,
+          "final_com_m": [
+            -4.440892098500626e-17,
+            0.4331975202436919,
+            1.6070646736986343
+          ],
+          "peak_force_n": [
+            206.20255452212547,
+            206.20255452213038,
+            279.6903675554256,
+            279.69036755537275
+          ],
+          "minimum_wall_clearance_m": -0.06690927663300461,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 6.642910082636361e-10,
+          "end_time_delta_from_finest_s": 0.0
+        },
+        {
+          "timestep_s": 0.001,
+          "success": false,
+          "category": "geometric_reach_limit",
+          "reason": "'rh_dyno' exceeds right_hand's maximum extension from the current stance",
+          "end_time_s": 3.0,
+          "final_com_m": [
+            -8.915090887740007e-15,
+            0.4331975199052899,
+            1.6070646739842778
+          ],
+          "peak_force_n": [
+            206.20412104343936,
+            206.20412104343902,
+            279.5272572422932,
+            279.52725724203793
+          ],
+          "minimum_wall_clearance_m": -0.06691048552908035,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 2.2145933304661108e-10,
+          "end_time_delta_from_finest_s": 0.0
+        },
+        {
+          "timestep_s": 0.0005,
+          "success": false,
+          "category": "geometric_reach_limit",
+          "reason": "'rh_dyno' exceeds right_hand's maximum extension from the current stance",
+          "end_time_s": 3.0,
+          "final_com_m": [
+            -5.0721331896446435e-15,
+            0.43319751973767495,
+            1.607064674129017
+          ],
+          "peak_force_n": [
+            206.20491254751747,
+            206.20491254751212,
+            279.4566605681423,
+            279.4566605680538
+          ],
+          "minimum_wall_clearance_m": -0.06691110037196263,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 0.0,
+          "end_time_delta_from_finest_s": 0.0
+        }
+      ],
+      "classification_agrees": true
+    },
+    {
+      "route": "data/routes/showcase/03_weak_grip.json",
+      "runs": [
+        {
+          "timestep_s": 0.002,
+          "success": false,
+          "category": "grip_strength_exceeded",
+          "reason": "arrival at 'hand_step_0' overloaded a contact: max grip force exceeded on left_hand at hold 'hand_step_0'",
+          "end_time_s": 3.418,
+          "final_com_m": [
+            0.00039216845540019285,
+            0.43444372046847585,
+            1.606982917534445
+          ],
+          "peak_force_n": [
+            206.20255452212547,
+            350.2547820367899,
+            279.6903675554256,
+            616.9559341753315
+          ],
+          "minimum_wall_clearance_m": -0.06703097898626828,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 5.745765779046507e-06,
+          "end_time_delta_from_finest_s": -0.0009999999999998899
+        },
+        {
+          "timestep_s": 0.001,
+          "success": false,
+          "category": "grip_strength_exceeded",
+          "reason": "arrival at 'hand_step_0' overloaded a contact: max grip force exceeded on left_hand at hold 'hand_step_0'",
+          "end_time_s": 3.418,
+          "final_com_m": [
+            0.00039362694310867617,
+            0.434439594831711,
+            1.606980912237669
+          ],
+          "peak_force_n": [
+            206.20412104343936,
+            350.2609185450244,
+            279.5272572422932,
+            616.9579747625212
+          ],
+          "minimum_wall_clearance_m": -0.06703029493862728,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 1.1826691289088892e-06,
+          "end_time_delta_from_finest_s": -0.0009999999999998899
+        },
+        {
+          "timestep_s": 0.0005,
+          "success": false,
+          "category": "grip_strength_exceeded",
+          "reason": "arrival at 'hand_step_0' overloaded a contact: max grip force exceeded on left_hand at hold 'hand_step_0'",
+          "end_time_s": 3.419,
+          "final_com_m": [
+            0.00039362070977269387,
+            0.43443908854920554,
+            1.606979843432056
+          ],
+          "peak_force_n": [
+            206.20491254751747,
+            350.2637625768998,
+            279.4566605681423,
+            616.9596799682158
+          ],
+          "minimum_wall_clearance_m": -0.0670300749433019,
+          "engine": "MuJoCo 3.16.0",
+          "final_com_delta_from_finest_m": 0.0,
+          "end_time_delta_from_finest_s": 0.0
+        }
+      ],
+      "classification_agrees": true
+    }
+  ],
+  "all_classifications_agree": true
+}

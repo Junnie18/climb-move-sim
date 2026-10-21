@@ -1,4 +1,6 @@
 import numpy as np
+import mujoco
+import pytest
 
 from climbsim import anthropometry as A
 from climbsim.holds import Hold, HoldType
@@ -39,3 +41,24 @@ def test_torque_limits_applied_to_actuators():
         assert cm.model.actuator_forcelimited[aid] == 1
         lo, hi = cm.model.actuator_forcerange[aid]
         assert hi > 0 and lo == -hi
+
+
+def test_requested_timestep_controls_elapsed_physics_time():
+    cm = ClimberModel.build(_simple_route(), timestep=0.001)
+    for _ in range(10):
+        mujoco.mj_step(cm.model, cm.data)
+    assert cm.data.time == pytest.approx(0.01)
+
+
+@pytest.mark.parametrize("dt", [0, -0.001, float("nan"), float("inf")])
+def test_invalid_timestep_rejected(dt):
+    with pytest.raises(ValueError, match="timestep"):
+        ClimberModel.build(_simple_route(), timestep=dt)
+
+
+def test_reach_bounds_include_real_segment_offsets():
+    from climbsim.model import arm_reach, leg_reach
+    # Triangle-inequality bounds from the compiled geometry, including the
+    # 23.94 cm ankle-to-site offset omitted by the old 65%-foot heuristic.
+    assert arm_reach() == pytest.approx(0.6976301312, abs=1e-8)
+    assert leg_reach() == pytest.approx(1.1001626068, abs=1e-8)

@@ -46,15 +46,20 @@ def _limb_geometry():
 
 
 def arm_reach(geom=None) -> float:
-    """Max distance from shoulder site to hand grip site (fully extended)."""
+    """Conservative geometric upper bound from shoulder to grip site.
+
+    Includes the actual MJCF segment offsets. Joint limits can reduce reach.
+    """
     geom = geom or _limb_geometry()
-    return geom["upper_arm"] + geom["forearm"] + 0.65 * geom["hand"]
+    return (np.hypot(geom["upper_arm"], 0.04)
+            + np.hypot(geom["forearm"], 0.02) + 0.6 * geom["hand"])
 
 
 def leg_reach(geom=None) -> float:
-    """Max distance from hip site to foot grip site (fully extended)."""
+    """Conservative hip-to-grip upper bound, including the actual foot site."""
     geom = geom or _limb_geometry()
-    return geom["thigh"] + geom["shank"] + 0.65 * geom["foot"]
+    return (np.hypot(geom["thigh"], 0.03)
+            + np.hypot(geom["shank"], 0.02) + 0.9 * geom["foot"])
 
 
 def _joint_xml(spec: A.JointSpec, name: str) -> str:
@@ -170,7 +175,9 @@ _HOLD_COLOR = {
 }
 
 
-def build_mjcf(route: Route, torso_start_pos=(0.0, 0.35, 1.55)) -> str:
+def build_mjcf(route: Route, torso_start_pos=(0.0, 0.35, 1.55), *, timestep=0.002) -> str:
+    if not np.isfinite(timestep) or timestep <= 0:
+        raise ValueError("timestep must be finite and positive")
     geom = _limb_geometry()
     tl = geom["trunk"]
     holds_xml = "\n      ".join(
@@ -180,7 +187,9 @@ def build_mjcf(route: Route, torso_start_pos=(0.0, 0.35, 1.55)) -> str:
     x0, y0, z0 = torso_start_pos
 
     xs = [h.pos[0] for h in route.holds.values()] + [x0]
-    zs = [h.pos[2] for h in route.holds.values()] + [z0 - 1.0, z0 + 0.5]
+    # Include headroom above the holds: the climber can be standing with hands
+    # below the shoulders, so a hold-only bounding box clips the head in videos.
+    zs = [h.pos[2] for h in route.holds.values()] + [z0 - 1.0, z0 + 1.25]
     cx, cz = (min(xs) + max(xs)) / 2, (min(zs) + max(zs)) / 2
     span = max(max(xs) - min(xs), max(zs) - min(zs), 1.5)
     cam_dist = span * 0.85 + 1.0
@@ -205,7 +214,7 @@ def build_mjcf(route: Route, torso_start_pos=(0.0, 0.35, 1.55)) -> str:
     xml = f"""
 <mujoco model="climber">
   <compiler angle="degree" autolimits="true"/>
-  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast" cone="elliptic"/>
+  <option timestep="{timestep}" gravity="0 0 -9.81" integrator="implicitfast" cone="elliptic"/>
   <default>
     <geom friction="0.9 0.02 0.002" solref="0.01 1"/>
   </default>
@@ -295,8 +304,8 @@ class ClimberModel:
     limb_eq_id: Dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def build(cls, route: Route) -> "ClimberModel":
-        xml = build_mjcf(route)
+    def build(cls, route: Route, *, timestep=0.002) -> "ClimberModel":
+        xml = build_mjcf(route, timestep=timestep)
         model = mujoco.MjModel.from_xml_string(xml)
         data = mujoco.MjData(model)
         self = cls(route=route, model=model, data=data)

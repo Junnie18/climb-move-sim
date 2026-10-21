@@ -1,0 +1,87 @@
+{
+  "name": "Current-stance reach limit",
+  "holds": [
+    {
+      "name": "lh0",
+      "pos": [
+        -0.22,
+        0.05,
+        1.55
+      ],
+      "type": "jug",
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "name": "rh0",
+      "pos": [
+        0.22,
+        0.05,
+        1.55
+      ],
+      "type": "jug",
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "name": "lf0",
+      "pos": [
+        -0.18,
+        0.05,
+        0.75
+      ],
+      "type": "foothold",
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "rf0",
+      "pos": [
+        0.18,
+        0.05,
+        0.75
+      ],
+      "type": "foothold",
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "rh_dyno",
+      "pos": [
+        0.75,
+        0.05,
+        2.55
+      ],
+      "type": "sloper",
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    }
+  ],
+  "start": {
+    "left_hand": "lh0",
+    "right_hand": "rh0",
+    "left_foot": "lf0",
+    "right_foot": "rf0"
+  },
+  "moves": [
+    {
+      "limb": "right_hand",
+      "hold": "rh_dyno"
+    }
+  ]
+}

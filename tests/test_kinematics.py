@@ -76,3 +76,34 @@ def test_target_beyond_max_reach_correctly_fails():
     # than doing nothing, because solve_ik returned wherever the last iteration
     # landed instead of the best point visited along the way.
     assert result.residual_m <= starting_distance + 1e-6
+
+
+def test_planning_does_not_modify_live_simulation_state():
+    """Replanning a reach must not teleport the limb or invalidate live caches."""
+    cm = _settled_model(_simple_route())
+    shoulder = cm.data.xpos[cm.model.body("upper_arm_R").id].copy()
+    target = shoulder + np.array([0.0, -0.3, 0.05])
+    before = {name: getattr(cm.data, name).copy() for name in
+              ("qpos", "qvel", "ctrl", "site_xpos", "cdof", "xpos")}
+    result = solve_ik_best(cm, "right_hand", target, tol=0.002)
+    assert result.reached
+    for name, expected in before.items():
+        np.testing.assert_array_equal(getattr(cm.data, name), expected,
+                                      err_msg=f"planning changed live {name}")
+
+
+def test_ik_jacobian_does_not_depend_on_stale_live_com_cache():
+    """A stale cdof cache must not change the solution of a known reachable pose."""
+    import mujoco
+    from climbsim.kinematics import solve_ik
+
+    cm = _settled_model(_simple_route())
+    qadr = cm.limb_joint_qpos_adr["right_hand"]
+    seed = cm.data.qpos[qadr].copy()
+    cm.data.qpos[qadr] = seed + np.array([0.08, -0.04, 0.04, -0.05])
+    mujoco.mj_kinematics(cm.model, cm.data)
+    target = cm.limb_site_pos("right_hand")
+    cm.data.qpos[qadr] = seed
+    cm.data.cdof[:] = 0.0
+    result = solve_ik(cm, "right_hand", target, tol=0.001)
+    assert result.reached, f"known reachable target missed by {result.residual_m} m"

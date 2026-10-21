@@ -5,14 +5,11 @@ Mass fractions and segment-length fractions (of standing height) are
 Winter's anthropometric tables (D.A. Winter, "Biomechanics and Motor
 Control of Human Movement", 4th ed., 2009, Table 4.1), which are the
 standard reference used in biomechanics/robotics for building segment
-models of the human body from a single height + mass. Joint torque and
-range-of-motion figures are order-of-magnitude values assembled from
-commonly cited strength-testing literature (e.g. isokinetic dynamometry
-studies of shoulder/elbow/hip/knee/ankle strength in trained adults) --
-they are not a clinical dataset, but they are within the published range
-for an athletic adult and are deliberately somewhat generous (climbers'
-finger/forearm/shoulder strength trains well above population norms) so
-the model isn't hand-tuned to make the demo routes work.
+models of the human body from a single height + mass. The inherited joint
+torque limits, ranges, and controller gains are engineering assumptions.
+They were adjusted during the original demo's development and have not
+been calibrated against measured climbing motion or dynamometry. Passing
+this simulation is not evidence that a particular person can do a move.
 """
 
 from dataclasses import dataclass

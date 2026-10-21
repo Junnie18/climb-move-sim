@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+MUJOCO_LOG.TXT
+*.egg-info/
+build/
+dist/
