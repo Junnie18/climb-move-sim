@@ -57,19 +57,43 @@ class Route:
 
     @classmethod
     def from_json(cls, path: str) -> "Route":
-        data = json.loads(Path(path).read_text())
+        return cls.from_dict(json.loads(Path(path).read_text()))
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Route":
+        """Parse the shared file/API schema without retaining caller-owned state."""
+        if not isinstance(data, dict):
+            raise ValueError("route must be a JSON object")
+        if not isinstance(data.get("holds"), list) or not data["holds"]:
+            raise ValueError("route holds must be a nonempty array")
+        if not isinstance(data.get("start"), dict):
+            raise ValueError("route start must be a limb-to-hold object")
+        if not isinstance(data.get("moves", []), list):
+            raise ValueError("route moves must be an array")
         holds = {}
-        for h in data["holds"]:
-            hold = Hold(name=h["name"], pos=h["pos"], type=HoldType(h["type"]),
-                        normal=h.get("normal"), friction_override=h.get("friction"),
-                        max_grip_n_override=h.get("max_grip_n"), radius_override=h.get("radius"))
+        for index, h in enumerate(data["holds"]):
+            if not isinstance(h, dict):
+                raise ValueError(f"hold {index + 1} must be an object")
+            try:
+                hold = Hold(name=h["name"], pos=h["pos"], type=h["type"],
+                            normal=h.get("normal"), friction_override=h.get("friction"),
+                            max_grip_n_override=h.get("max_grip_n"), radius_override=h.get("radius"))
+            except KeyError as exc:
+                raise ValueError(f"hold {index + 1} is missing {exc.args[0]!r}") from exc
             if hold.name in holds:
                 raise ValueError(f"duplicate hold name {hold.name!r}")
             holds[hold.name] = hold
-        moves = [Move(limb=m["limb"], hold=m["hold"]) for m in data["moves"]]
-        return cls(name=data["name"], holds=holds, start=dict(data["start"]), moves=moves)
+        moves = []
+        for index, move in enumerate(data.get("moves", [])):
+            if not isinstance(move, dict):
+                raise ValueError(f"move {index + 1} must be an object")
+            try:
+                moves.append(Move(limb=move["limb"], hold=move["hold"]))
+            except KeyError as exc:
+                raise ValueError(f"move {index + 1} is missing {exc.args[0]!r}") from exc
+        return cls(name=data.get("name"), holds=holds, start=dict(data["start"]), moves=moves)
 
-    def to_json(self, path: str) -> None:
+    def to_dict(self) -> dict:
         holds = []
         for hold in self.holds.values():
             item = dict(name=hold.name, pos=list(hold.pos), type=hold.type.value,
@@ -79,10 +103,12 @@ class Route:
                 if override is not None:
                     item[prop] = override
             holds.append(item)
-        data = {
+        return {
             "name": self.name,
             "holds": holds,
-            "start": self.start,
+            "start": dict(self.start),
             "moves": [dict(limb=m.limb, hold=m.hold) for m in self.moves],
         }
-        Path(path).write_text(json.dumps(data, indent=2))
+
+    def to_json(self, path: str) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), indent=2, allow_nan=False))

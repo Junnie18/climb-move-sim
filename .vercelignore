@@ -1,0 +1,14 @@
+.git
+.env*
+.vercel
+.venv
+.pytest_cache
+**/__pycache__
+*.egg-info
+data
+tests
+docs/superpowers
+docs/validation.json
+build
+dist
+MUJOCO_LOG.TXT

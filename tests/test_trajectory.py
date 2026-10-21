@@ -69,6 +69,8 @@ def test_exported_attempt_has_finite_monotonic_frames_and_final_verdict():
     assert any(not outcome["passed"] for outcome in payload["outcomes"])
     assert payload["metadata"]["timestep"] == 0.001
     assert payload["metadata"]["massKg"] == pytest.approx(70)
+    assert payload["routeDefinition"]["name"] == route.name
+    assert payload["routeDefinition"]["start"] == route.start
     json.dumps(payload, allow_nan=False)
 
 

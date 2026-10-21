@@ -2,18 +2,45 @@
 
 A climbing-move simulator with a 22-DOF MuJoCo body, numerical inverse
 kinematics, torque-limited control and force-checked contacts. Build a route
-as a sequence of hand/foot moves, simulate it, then inspect what happened in
-an interactive 3D replay.
+by dragging holds and assigning hands and feet, simulate the move sequence,
+then inspect what happened in a 3D replay with force telemetry.
 
 The interesting question is not just “can the hand reach?” It is also “can
 the other three contacts support the body while it moves?”
 
-## Try the interactive demo
+## Interactive route editor
 
-**[Launch the interactive demo](https://junnie18.github.io/climb-move-sim/)**
+**[Open the live climbing lab](https://ascent-climbing-lab.vercel.app/)**
 
-Download or clone this repository and open **[docs/demo/index.html](docs/demo/index.html)**
-in a browser. It works offline, without Python, a server, or a GPU.
+1. Pick a route template. In **Move holds**, drag a hold to change its position.
+2. Switch to **Place limbs**. **Start pose** assigns the four starting contacts;
+   **Add move** appends a hand or foot move to the sequence.
+3. Drag a labeled limb handle onto a hold, or select a limb and target in the
+   inspector. Hold coordinates, type, grip capacity and friction are editable.
+4. Click **Run simulation**. The Python service simulates the edited route in
+   MuJoCo and returns a new verdict and trajectory. Open **View replay** to
+   inspect the motion, contacts and force history.
+
+Edits clear the previous verdict. Undo and reset also require a fresh run. The
+planning figure illustrates contact assignments; it is not a solved body pose.
+Use **Export JSON** to keep a route and **Import route** to reopen it. The
+service does not maintain a route database.
+
+To run the full app locally after installing the Python dependencies below:
+
+```bash
+python scripts/serve_editor.py
+```
+
+Open **http://127.0.0.1:8765/**. The local server serves both the editor and
+simulation API. No GPU, API key or paid model service is required.
+
+The **[GitHub Pages copy](https://junnie18.github.io/climb-move-sim/)** and a
+downloaded **[docs/demo/index.html](docs/demo/index.html)** support editing and
+recorded replay. Fresh simulations require the hosted service or a local Python
+server; they do not run inside the browser.
+
+## Inspect a simulation
 
 - Orbit the climber or switch between front and side views.
 - Play, pause, change speed and scrub through the actual simulation.
@@ -22,9 +49,8 @@ in a browser. It works offline, without Python, a server, or a GPU.
 - Compare completed movements with reach, tracking and grip failures.
 - Import a trajectory JSON produced by your own simulation.
 
-The browser replays recorded MuJoCo states. It does not run a physics engine or
-invent new trajectories. The starting preview is paused after stance settling;
-**Restart** returns to simulation time zero.
+The replay uses MuJoCo states returned by a fresh run or bundled with the three
+recorded examples. **Restart** returns to simulation time zero.
 
 ## Run your own simulation
 
@@ -50,7 +76,7 @@ To regenerate the bundled scenarios or compare numerical resolution:
 python scripts/build_demo.py
 python scripts/validate_physics.py
 python -m pytest -q
-node --test docs/demo/geometry.test.cjs
+node --test docs/demo/*.test.cjs
 ```
 
 An optional MP4 renderer requires a working OpenGL environment:
@@ -129,12 +155,16 @@ src/climbsim/
   diagnostics.py       Signed body-to-wall clearance
   feasibility.py       Controller, contact lifecycle and failure categories
   holds.py / route.py  Validated route and surface configuration
+  trajectory_export.py Shared geometry, states and force telemetry export
+  editor_server.py    Bounded HTTP API with isolated simulation workers
 scripts/
+  serve_editor.py     Start the complete local editor and simulation API
   run_route.py         Simulate and optionally render MP4
   export_trajectory.py Export real geometry, states and force telemetry
   build_demo.py        Regenerate the offline showcase
   validate_physics.py  Timestep sensitivity study
-docs/demo/             Dependency-free interactive replay
+docs/demo/             Dependency-free route editor and 3D replay
+api/index.py           Hosted Python API adapter
 tests/                 Analytic, regression and integration checks
 ```
 
