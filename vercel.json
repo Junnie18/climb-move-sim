@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "docs/demo",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 120,
+      "includeFiles": "src/climbsim/**",
+      "excludeFiles": "{.venv/**,data/**,docs/**,tests/**}"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" }
+  ]
+}

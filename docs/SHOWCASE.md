@@ -1,7 +1,25 @@
 # Presenting the project
 
-Open `docs/demo/index.html`. The complete demo works offline and starts paused
-at a real, supported frame. No Python installation is needed to show the replay.
+Open https://ascent-climbing-lab.vercel.app/ or start
+`python scripts/serve_editor.py` and visit http://127.0.0.1:8765/.
+The editor runs new simulations through Python. Opening `docs/demo/index.html`
+offline still supports route editing and recorded replays.
+
+## Show the interactive editor
+
+1. Choose **Supported hand sequence** and run it unchanged. The controller
+   should complete its four small hand moves. Open the replay to inspect loads.
+2. Return to the editor. Drag a target hand hold much higher. The previous
+   verdict is cleared immediately. Run again and inspect the returned failure.
+3. Reset the route, clear the moves, choose **Place limbs** and **Add move**, then
+   drag a hand handle onto the next nearby hold. The explicit move list is what
+   will be simulated. **Start pose** instead changes the initial stance.
+4. Show grip capacity and friction in the hold inspector. Explain that reaching
+   a point is only part of the problem: the remaining contacts must support the
+   body, and the arriving limb must establish a valid contact.
+
+This is model/controller feasibility, with illustrative strengths and no
+body-wall collision response. A failed solve is not proof of human impossibility.
 
 ## A 90-second walkthrough
 
@@ -26,8 +44,9 @@ at a real, supported frame. No Python installation is needed to show the replay.
 
 Built a 22-DOF rock-climbing simulator in Python and MuJoCo with Jacobian-based
 inverse kinematics, contact-aware support control, torque-limited actuation and
-friction-cone checks; developed an offline 3D replay with force telemetry and
-validated behavior using analytic physics and timestep-sensitivity tests.
+friction-cone checks; built a drag-and-drop route editor backed by isolated
+simulation workers and a 3D force-telemetry replay, with analytic physics and
+timestep-sensitivity validation.
 
 ## Interview explanation
 

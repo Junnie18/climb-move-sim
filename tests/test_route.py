@@ -64,3 +64,26 @@ def test_route_json_rejects_duplicate_names_before_they_are_overwritten(tmp_path
         "start": start_on(), "moves": []}))
     with pytest.raises(ValueError, match="duplicate"):
         Route.from_json(path)
+
+
+def test_dictionary_roundtrip_is_detached_and_preserves_contact_inputs():
+    route = Route("custom", {"h": Hold("h", (1, 2, 3), HoldType.SLOPER,
+                  normal=(0, 0, 2), friction_override=0.4,
+                  max_grip_n_override=200, radius_override=0.025)}, start_on())
+    encoded = route.to_dict()
+    assert encoded["holds"][0] == {"name": "h", "pos": [1, 2, 3],
+        "type": "sloper", "normal": [0, 0, 1], "friction": 0.4,
+        "max_grip_n": 200, "radius": 0.025}
+    assert Route.from_dict(encoded) == route
+    encoded["start"]["left_hand"] = "different"
+    assert route.start["left_hand"] == "h"
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"name": "x", "holds": None},
+    {"name": "x", "holds": [None]},
+    {"name": "x", "holds": [{"name": "h", "pos": [0, 0, 0], "type": "jug"}],
+     "start": start_on(), "moves": [None]},
+])
+def test_dictionary_validation_returns_actionable_value_errors(value):
+    with pytest.raises(ValueError):
+        Route.from_dict(value)

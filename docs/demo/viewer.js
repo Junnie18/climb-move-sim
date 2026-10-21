@@ -20,7 +20,13 @@
   function make(tag, className, content) { const node = document.createElement(tag); if (className) node.className = className; if (content !== undefined) node.textContent = content; return node; }
 
   function normalizeDemo(data) {
-    G.validateTrajectory(data);
+    if (data?.frames?.length === 0) {
+      if (data.success !== false || typeof data.route !== 'string' || !Array.isArray(data.outcomes) || !data.outcomes.some(o => o.passed === false) || !Array.isArray(data.geometry?.holds)) throw new Error('An empty trajectory must include a failed result and its diagnostic.');
+      // Exercise the common schema checks without inventing a frame for display.
+      // This temporary validation-only transform is discarded immediately.
+      if (!Array.isArray(data.bodyNames)) throw new Error('The failed trajectory must name its model bodies.');
+      G.validateTrajectory({...data, frames: [{t: 0, pos: data.bodyNames.map(() => [0, 0, 0]), quat: data.bodyNames.map(() => [1, 0, 0, 0])}]});
+    } else G.validateTrajectory(data);
     return {...data, limbs: data.limbs || ['left_hand', 'right_hand', 'left_foot', 'right_foot'], outcomes: data.outcomes || []};
   }
 
@@ -49,8 +55,12 @@
     state.demo = state.demos[index]; if (!state.demo) return;
     state.time = 0; state.playing = false; state.index = 0; uiIndex = -1; state.peak = 0;
     const d = state.demo;
+    $('replay-origin').textContent = d.freshRun ? 'FRESH MUJOCO RUN' : 'RECORDED EXAMPLE';
     $('route-select').value = String(index);
     $('timeline').max = String(duration()); $('timeline').value = '0';
+    ['play', 'restart', 'timeline'].forEach(id => $(id).disabled = !d.frames.length);
+    $('scene-message').hidden = Boolean(d.frames.length);
+    if (!d.frames.length) $('scene-message').replaceChildren(make('strong', '', 'No motion was recorded.'), make('p', '', 'The starting pose could not be established. See the attempt diagnostic below, then adjust the route in the editor.'));
     $('result-badge').textContent = d.success ? 'CONTROLLER COMPLETED' : 'NOT COMPLETED';
     $('result-badge').classList.toggle('failed', !d.success);
     const metadata = d.metadata || d;
@@ -70,7 +80,7 @@
     const d = state.demo, failure = d.outcomes.find(o => !o.passed);
     const reason = failure?.reason || '';
     let title, description;
-    if (d.success) { title = 'Controller completed.'; description = 'This recorded attempt passed its reachability, transition, and settle checks within the simplified model and configured grip limits. Wall clearance is reported separately.'; }
+    if (d.success) { title = 'Model/controller completed.'; description = 'This attempt passed its reachability, transition, and settle checks within the simplified model and configured grip limits. Wall clearance is reported separately.'; }
     else if (failure?.phase === 'reachability') { title = failure.detail?.category === 'geometric_reach_limit' ? 'Beyond the current reach.' : 'No target pose found.'; description = 'The reachability check rejected the target from the current stance. This controlled attempt stopped before that transition.'; }
     else if (failure?.phase === 'initialization') { title = 'The starting stance fails.'; description = 'The model could not establish a valid starting configuration. The exact initialization diagnostic is recorded below.'; }
     else if (/grip|friction|force|cone|overload|strength/i.test(reason)) { title = 'A grip reaches its limit.'; description = 'A recorded grip load violated a configured force rating or friction constraint. Inspect the force history and exact diagnostic.'; }
@@ -97,7 +107,7 @@
     state.view = view; state.zoom = 1;
     state.azimuth = view === 'front' ? 0 : view === 'side' ? Math.PI / 2 - .02 : -.34;
     state.elevation = view === 'front' || view === 'side' ? 0 : .13;
-    const positions = [...state.demo.geometry.holds.map(h => h.pos), ...state.demo.frames[0].pos];
+    const positions = [...state.demo.geometry.holds.map(h => h.pos), ...(state.demo.frames[0]?.pos || [[0, 0, 1]])];
     const xs = positions.map(p => p[0]), zs = positions.map(p => p[2]);
     const minX = Math.min(...xs) - .25, maxX = Math.max(...xs) + .25, minZ = Math.min(...zs) - .25, maxZ = Math.max(...zs) + .32;
     camera.target = [(minX + maxX) / 2, .14, (minZ + maxZ) / 2];
@@ -112,6 +122,12 @@
   function updateUI() {
     const d = state.demo; if (!d) return;
     const frame = d.frames[state.index];
+    if (!frame) {
+      $('frame-count').textContent = 'NO RECORDED FRAMES'; $('phase-label').textContent = 'Initialization stopped'; $('move-label').textContent = 'See the diagnostic below'; $('wall-warning').hidden = true;
+      $('grip-readouts').querySelectorAll('.grip-value').forEach(node => { node.textContent = '—'; });
+      $('contact-count').textContent = '—'; $('com-height').textContent = '—'; $('time-readout').textContent = '0.00 / 0.00 s'; $('play-state').textContent = 'NO RECORD';
+      return;
+    }
     $('timeline').value = String(state.time);
     $('time-readout').replaceChildren(document.createTextNode(state.time.toFixed(2) + ' '), make('span', '', `/ ${duration().toFixed(2)} s`));
     $('play-state').textContent = state.playing ? 'PLAYING' : state.time >= duration() && duration() ? 'END OF RECORD' : 'PAUSED';
@@ -250,6 +266,7 @@
     camera.scale = Math.min((width - 80) / camera.spanX, (height - 94) / camera.spanZ) * state.zoom;
     ctx.clearRect(0, 0, width, height); ctx.fillStyle = '#eeeee5'; ctx.fillRect(0, 0, width, height);
     drawWall(); const frame = state.demo.frames[state.index];
+    if (!frame) { drawAxes(); return; }
     // Shadows use the same recorded body centers and radii; they are a visual depth cue only.
     ctx.save(); ctx.globalAlpha = .13;
     state.demo.geometry.bodies.forEach(body => { const i = state.demo.bodyNames.indexOf(body.name); if (i < 0) return; body.geoms.filter(g => g.type === 'capsule').forEach(g => { const ends = G.capsuleEndpoints(frame.pos[i], frame.quat[i], g).map(p => [p[0] + .06, 0, p[2] - .04]); const a = point(ends[0]), b = point(ends[1]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = '#6a7d62'; ctx.lineWidth = g.size[0] * camera.scale * 2.4; ctx.lineCap = 'round'; ctx.stroke(); }); });
@@ -271,8 +288,8 @@
     pctx.beginPath(); pctx.moveTo(x(state.time), top); pctx.lineTo(x(state.time), bottom); pctx.strokeStyle = '#ecedda70'; pctx.lineWidth = .7; pctx.stroke(); pctx.textAlign = 'left';
   }
 
-  function setTime(time) { state.time = Math.max(0, Math.min(duration(), time)); state.index = G.frameIndex(state.demo.frames, state.time); updateUI(); dirty = true; }
-  function togglePlayback() { if (!state.demo) return; if (state.time >= duration()) setTime(0); state.playing = !state.playing; state.last = null; updateUI(); }
+  function setTime(time) { if (!state.demo?.frames.length) return; state.time = Math.max(0, Math.min(duration(), time)); state.index = G.frameIndex(state.demo.frames, state.time); updateUI(); dirty = true; }
+  function togglePlayback() { if (!state.demo?.frames.length) return; if (state.time >= duration()) setTime(0); state.playing = !state.playing; state.last = null; updateUI(); }
   function tick(now) {
     if (state.playing && state.demo) {
       if (state.last !== null) setTime(state.time + Math.min((now - state.last) / 1000, .1) * state.speed);
@@ -306,6 +323,16 @@
     e.target.value = '';
   });
   function resize() { [width, height] = fitCanvas(canvas, ctx); [plotWidth, plotHeight] = fitCanvas(plot, pctx); dirty = true; }
+  window.ClimbReplay = {
+    loadTrajectory(data) {
+      const demo = {...normalizeDemo(data), freshRun: true}; state.demos.push(demo);
+      const option = make('option', '', `${human(demo.route)} · edited run`); option.value = String(state.demos.length - 1); $('route-select').append(option);
+      selectDemo(state.demos.length - 1); return demo;
+    },
+    pause() { state.playing = false; updateUI(); },
+    resize,
+    invalidate() { state.playing = false; $('result-badge').textContent = 'PREVIOUS RUN · ROUTE EDITED'; $('result-badge').classList.add('failed'); }
+  };
   new ResizeObserver(resize).observe($('viewport')); new ResizeObserver(resize).observe(plot.parentElement);
   try {
     const source = window.CLIMB_DEMOS || [];
