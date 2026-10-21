@@ -1,0 +1,497 @@
+{
+  "evaluated_on": "2026-10-21",
+  "source_commit": "17aa029",
+  "engine": "MuJoCo 3.16.0",
+  "baseline_route": "data/routes/showcase/01_supported_steps.json",
+  "method": "Load the baseline, remove all moves, replace each named hold position with the supplied coordinates, then run attempt_route with timestep 0.002. Unlisted holds and all physical force limits remain unchanged.",
+  "stance_hold_duration_s": 3,
+  "timestep_s": 0.002,
+  "interpretation": "All 28 cases held under this simplified model. This evaluates a starting stance, not a transition into it or human climbability. Body-wall collision response, fingers, fatigue, and individual strength remain outside this validation.",
+  "cases": [
+    {
+      "id": "base",
+      "hold_positions_m": {},
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_0_0.05",
+      "hold_positions_m": {
+        "lh0": [
+          -0.27,
+          0.05,
+          1.55
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_0_0.1",
+      "hold_positions_m": {
+        "lh0": [
+          -0.32,
+          0.05,
+          1.55
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_0_0.2",
+      "hold_positions_m": {
+        "lh0": [
+          -0.42,
+          0.05,
+          1.55
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_0_0.3",
+      "hold_positions_m": {
+        "lh0": [
+          -0.52,
+          0.05,
+          1.55
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_2_0.05",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.6
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_2_0.1",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.65
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_2_0.2",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.75
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_hand_2_0.3",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.85
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_foot_0_0.05",
+      "hold_positions_m": {
+        "lf0": [
+          -0.23,
+          0.05,
+          0.75
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_foot_0_0.1",
+      "hold_positions_m": {
+        "lf0": [
+          -0.28,
+          0.05,
+          0.75
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_foot_0_0.2",
+      "hold_positions_m": {
+        "lf0": [
+          -0.38,
+          0.05,
+          0.75
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_foot_2_0.05",
+      "hold_positions_m": {
+        "lf0": [
+          -0.18,
+          0.05,
+          0.8
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_foot_2_0.1",
+      "hold_positions_m": {
+        "lf0": [
+          -0.18,
+          0.05,
+          0.85
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "left_foot_2_0.2",
+      "hold_positions_m": {
+        "lf0": [
+          -0.18,
+          0.05,
+          0.95
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "hands_wide",
+      "hold_positions_m": {
+        "lh0": [
+          -0.52,
+          0.05,
+          1.55
+        ],
+        "rh0": [
+          0.52,
+          0.05,
+          1.55
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "feet_wide",
+      "hold_positions_m": {
+        "lf0": [
+          -0.38,
+          0.05,
+          0.75
+        ],
+        "rf0": [
+          0.38,
+          0.05,
+          0.75
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "hands_low",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.25
+        ],
+        "rh0": [
+          0.22,
+          0.05,
+          1.25
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "feet_high",
+      "hold_positions_m": {
+        "lf0": [
+          -0.18,
+          0.05,
+          0.95
+        ],
+        "rf0": [
+          0.18,
+          0.05,
+          0.95
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "all_up",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          2.05
+        ],
+        "rh0": [
+          0.22,
+          0.05,
+          2.05
+        ],
+        "lf0": [
+          -0.18,
+          0.05,
+          1.25
+        ],
+        "rf0": [
+          0.18,
+          0.05,
+          1.25
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "crouch_medium",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.25
+        ],
+        "rh0": [
+          0.22,
+          0.05,
+          1.25
+        ],
+        "lf0": [
+          -0.18,
+          0.05,
+          0.65
+        ],
+        "rf0": [
+          0.18,
+          0.05,
+          0.65
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "crouch_deep",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.1
+        ],
+        "rh0": [
+          0.22,
+          0.05,
+          1.1
+        ],
+        "lf0": [
+          -0.18,
+          0.05,
+          0.8
+        ],
+        "rf0": [
+          0.18,
+          0.05,
+          0.8
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "crouch_wide",
+      "hold_positions_m": {
+        "lh0": [
+          -0.4,
+          0.05,
+          1.1
+        ],
+        "rh0": [
+          0.4,
+          0.05,
+          1.1
+        ],
+        "lf0": [
+          -0.4,
+          0.05,
+          0.8
+        ],
+        "rf0": [
+          0.4,
+          0.05,
+          0.8
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "tall_stretch",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.95
+        ],
+        "rh0": [
+          0.22,
+          0.05,
+          1.95
+        ],
+        "lf0": [
+          -0.18,
+          0.05,
+          0.3
+        ],
+        "rf0": [
+          0.18,
+          0.05,
+          0.3
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "hand_wide",
+      "hold_positions_m": {
+        "lh0": [
+          -0.7,
+          0.05,
+          1.55
+        ],
+        "rh0": [
+          0.7,
+          0.05,
+          1.55
+        ],
+        "lf0": [
+          -0.18,
+          0.05,
+          0.35
+        ],
+        "rf0": [
+          0.18,
+          0.05,
+          0.35
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "foot_wide",
+      "hold_positions_m": {
+        "lh0": [
+          -0.22,
+          0.05,
+          1.55
+        ],
+        "rh0": [
+          0.22,
+          0.05,
+          1.55
+        ],
+        "lf0": [
+          -0.6,
+          0.05,
+          0.35
+        ],
+        "rf0": [
+          0.6,
+          0.05,
+          0.35
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "compact",
+      "hold_positions_m": {
+        "lh0": [
+          -0.05,
+          0.05,
+          1.55
+        ],
+        "rh0": [
+          0.05,
+          0.05,
+          1.55
+        ],
+        "lf0": [
+          -0.05,
+          0.05,
+          0.35
+        ],
+        "rf0": [
+          0.05,
+          0.05,
+          0.35
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    },
+    {
+      "id": "all_left",
+      "hold_positions_m": {
+        "lh0": [
+          -1.22,
+          0.05,
+          1.55
+        ],
+        "rh0": [
+          -0.78,
+          0.05,
+          1.55
+        ],
+        "lf0": [
+          -1.18,
+          0.05,
+          0.35
+        ],
+        "rf0": [
+          -0.82,
+          0.05,
+          0.35
+        ]
+      },
+      "success": true,
+      "first_failure": null
+    }
+  ]
+}

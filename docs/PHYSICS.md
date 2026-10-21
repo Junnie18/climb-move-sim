@@ -59,16 +59,33 @@ the body to the hold center. Contact loads are checked immediately and throughou
 settling, including the forces used by integration. There is no grace period
 that silently ignores overloaded attachments.
 
+The controller waits until site speed is at most 0.02 m/s before attaching a
+foot or an ungraspable contact. Jug/crimp hands retain a 0.12 m/s ceiling.
+These are illustrative acquisition settings, not experimentally fitted human
+parameters. The slower touchdown avoids braking impulses that previously made
+5–10 cm foot moves fail immediately at attachment. Friction, grip capacities
+and the per-sample force checks are unchanged.
+
 ## Interpreting results
 
 | Result | What it establishes |
 |---|---|
 | Completed | This controller executed the requested sequence under the model assumptions. |
+| Pose held | The displayed contacts supported the model through three seconds of settling. Getting into the pose was not tested. |
 | Geometric reach limit | The target exceeds a conservative segment-length bound from the current stance. Repositioning the body could change this. |
 | IK did not converge | The numerical planner did not find a solution; reachability remains unresolved. |
 | Contact not reached | The controller failed the distance/speed gate within its movement window. |
 | Contact cone exceeded | The attachment would require tension or more friction than the configured surface supplies. |
 | Grip strength exceeded | The required force exceeds the configured effective capacity. |
+
+The editor offers separate pose and movement checks. Pose checks initialize
+whole-body IK at the displayed contacts and run the usual dynamic settling and
+force checks. Movement checks start from the route's original stance and execute
+its sequence. Their per-limb IK holds the torso fixed while planning; it does
+not search body-repositioning strategies. For example, a foot target 5 cm below
+its initial position can fail the movement planner while the same final contacts
+pass the pose check. This is a planner limitation, not evidence of an impossible
+stance.
 
 ## Known approximation: wall intersections
 
@@ -89,6 +106,13 @@ patches. Current completed routes remain subject to this limitation.
 clearance, planning-state isolation, Jacobian consistency, contact gating,
 input validation, exported telemetry and end-to-end scenarios. These establish
 internal correctness for the tested cases.
+
+[The stance audit](stance_validation.json) records 28 supported synthetic poses,
+including raised/spread contacts, crouches and translated stances. Five varied
+poses are retained as end-to-end regression tests. Contact-acquisition tests
+cover eight small foot movements and audit actual forces throughout integration,
+including the first newly attached sample. Genuine reach and grip-limit failures
+remain covered. These are model/controller checks, not human climbing trials.
 
 `python scripts/validate_physics.py` repeats the showcase at 2 ms, 1 ms and 0.5 ms.
 It records outcome categories, event times, force peaks, final center of mass and

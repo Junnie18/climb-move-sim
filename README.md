@@ -14,8 +14,9 @@ the other three contacts support the body while it moves?”
 
 1. Start with the empty move sequence. Drag a labeled hand or foot onto a
    numbered hold to add a move. Drag the holds themselves to reshape the route.
-2. Check the queued moves beside the wall, then test the route. You can also
-   run the example to see a single 20 cm hand movement immediately.
+2. Choose **Test this pose** to check whether the displayed contacts support
+   the body, or **Test moves** to execute the queued transitions. The pose
+   check keeps your move sequence. You can also run the 20 cm hand example.
 3. The Python service simulates the current route in MuJoCo. Fresh results play
    automatically and explain whether the movement completed or what failed.
 4. Return to editing to adjust the route. Advanced controls expose starting
@@ -133,6 +134,11 @@ python scripts/test_move.py path/to/route.json left_hand target_hold attempt.jso
 “Controller completed” means that the requested sequence succeeded in this
 simplified simulation. It does **not** establish that a real person can climb it.
 An unsuccessful controller or IK attempt does not prove that nobody could.
+
+“Pose held in the model” checks three seconds of support at the displayed
+contacts. It does not establish that the controller can move into that pose.
+Movement planning currently solves one limb at a time without planning a torso
+reposition, so a failed transition can have a supported destination pose.
 
 Joint strengths and hold parameters are uncalibrated engineering assumptions.
 The wall is visual only; body-wall collision response is not implemented, and

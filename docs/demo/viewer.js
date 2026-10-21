@@ -61,8 +61,10 @@
     ['play', 'restart', 'timeline'].forEach(id => $(id).disabled = !d.frames.length);
     $('scene-message').hidden = Boolean(d.frames.length);
     if (!d.frames.length) $('scene-message').replaceChildren(make('strong', '', 'No motion was recorded.'), make('p', '', 'The starting pose could not be established. See the attempt diagnostic below, then adjust the route in the editor.'));
-    $('result-badge').textContent = d.freshRun && !d.currentDraft ? 'PREVIOUS ROUTE VERSION' : d.success ? 'COMPLETED IN MODEL' : 'ATTEMPT STOPPED';
+    const resultKind = window.ClimbEditorState.describeResult(d).kind;
+    $('result-badge').textContent = d.freshRun && !d.currentDraft ? 'PREVIOUS ROUTE VERSION' : d.success ? (d.checkType === 'pose' ? 'POSE HELD IN MODEL' : 'COMPLETED IN MODEL') : resultKind === 'unresolved' ? 'NOT RESOLVED' : 'MODEL ATTEMPT STOPPED';
     $('result-badge').classList.toggle('failed', !d.success);
+    $('result-badge').classList.toggle('unresolved', resultKind === 'unresolved');
     const metadata = d.metadata || d;
     const mass = d.massKg ?? metadata.massKg, step = d.timestep ?? metadata.timestep;
     $('model-stats').textContent = `${Number.isFinite(mass) ? mass.toFixed(1) : '—'} kg · ${Number.isFinite(step) ? (step * 1000).toFixed(0) : '—'} ms step`;
@@ -75,7 +77,7 @@
     if (preview) { state.time = preview.t; state.index = G.frameIndex(d.frames, state.time); }
     if (d.freshRun && d.autoplay && d.frames.length) {
       const transition = d.frames.find(f => f.moveIndex >= 0 && /dynamic|transition/.test(f.phase || ''));
-      state.time = transition ? transition.t : Math.min(2.8, duration());
+      state.time = d.checkType === 'pose' ? 0 : transition ? transition.t : Math.min(2.8, duration());
       state.index = G.frameIndex(d.frames, state.time); state.playing = state.time < duration(); state.last = null;
     }
     updateUI(); dirty = true; renderNow();
@@ -85,7 +87,8 @@
     const d = state.demo, failure = d.outcomes.find(o => !o.passed);
     const explanation = window.ClimbEditorState.describeResult(d);
     $('replay-result-card').className = `replay-result-card ${explanation.kind}`;
-    $('replay-result-context').textContent = d.freshRun ? (d.currentDraft ? 'RESULT FOR YOUR CURRENT ROUTE' : 'OLDER RESULT · YOUR WALL HAS CHANGED') : 'RECORDED EXAMPLE · NOT YOUR EDITED WALL';
+    const checkLabel = d.checkType === 'pose' ? `${d.poseScope === 'final' ? 'FINAL ' : d.poseScope === 'starting' ? 'STARTING ' : ''}POSE SUPPORT CHECK` : 'MOVE SEQUENCE CHECK';
+    $('replay-result-context').textContent = d.freshRun ? (d.currentDraft ? `${checkLabel} · CURRENT DRAFT` : `OLDER ${checkLabel} · YOUR WALL HAS CHANGED`) : 'RECORDED EXAMPLE · NOT YOUR EDITED WALL';
     $('replay-result-title').textContent = explanation.title; $('replay-result-text').textContent = explanation.text;
     const reason = failure?.reason || '';
     const {title, text: description} = explanation;

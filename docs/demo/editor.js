@@ -7,11 +7,12 @@
   const holdColors = {jug: '#c58c62', crimp: '#aa8dba', sloper: '#71a49c', foothold: '#96a377'};
   const canvas = $('planner'), ctx = canvas.getContext('2d');
   const templates = (window.CLIMB_DEMOS || []).flatMap(d => { try { return [{name: d.route, route: E.fromDemo(d)}]; } catch { return []; } });
-  if (!templates.length) { $('editor-status').textContent = 'No editable route templates were found. Load the bundled demo data to use the editor.'; $('run-simulation').disabled = true; return; }
+  if (!templates.length) { $('editor-status').textContent = 'No editable route templates were found. Load the bundled demo data to use the editor.'; $('run-simulation').disabled = true; $('test-pose').disabled = true; return; }
   const starter = E.starter(templates[0].route); templates.unshift({name: 'Blank wall · four starting contacts', route: starter});
   const store = E.create(starter);
   let mode = 'moves', tool = 'limbs', selectedLimb = 'left_hand', selectedHold = 'target_left';
   let width = 800, height = 600, drag = null, busy = false, runId = 0, zoom = 1, importedRoute = null;
+  let poseScopeRevision = 0, activeCheckType = null;
   let preview = null, previewRevision = -1, previewTimer, previewController;
   const camera = {x: 0, z: 1.3, scale: 360};
   const hostedDefault = location.hostname === 'junnie18.github.io' && /^\/climb-move-sim(?:\/|$)/.test(location.pathname) ? 'https://ascent-climbing-lab.vercel.app' : '';
@@ -51,7 +52,16 @@
     ['editor', 'replay'].forEach(name => { $(name + '-tab').classList.toggle('active', name === tab); $(name + '-tab').setAttribute('aria-pressed', String(name === tab)); });
     if (editing) { window.ClimbReplay?.pause(); resize(); } else window.ClimbReplay?.resize();
   }
-  function setMode(next) { mode = next; tool = 'limbs'; renderControls(); draw(); schedulePreview(); }
+  function setMode(next) {
+    if (next !== mode) {
+      poseScopeRevision++;
+      if (activeCheckType === 'pose' || !busy && store.result?.checkType === 'pose') {
+        $('view-result').hidden = true; $('replay-tab').disabled = true; window.ClimbReplay?.invalidate();
+        setStatus('Displayed pose changed', busy ? 'The running pose result will be discarded. Test again when it finishes.' : 'Test this pose again to check these contacts. Your planned moves are unchanged.');
+      }
+    }
+    mode = next; tool = 'limbs'; renderControls(); draw(); schedulePreview();
+  }
   function fit() {
     const positions = store.route.holds.map(h => h.pos), xs = positions.map(p => p[0]), zs = positions.map(p => p[2]);
     const minX = Math.min(...xs) - .5, maxX = Math.max(...xs) + .5, minZ = Math.min(...zs) - .25, maxZ = Math.max(...zs) + .4;
@@ -70,7 +80,8 @@
     ['start', 'moves'].forEach(m => { $('mode-' + m).classList.toggle('active', mode === m); $('mode-' + m).setAttribute('aria-pressed', String(mode === m)); });
     $('assignment-help').textContent = mode === 'start' ? 'Editing starting contacts. Switch back to Add moves before planning your next reach.' : 'Drag a labeled hand or foot onto a hold. Each drop adds one move.';
     $('planner-context').textContent = mode === 'start' ? 'Editing the starting pose' : route.moves.length ? `${route.moves.length} move${route.moves.length === 1 ? '' : 's'} planned · Drag another limb to continue` : 'Try dragging the left hand to hold 1';
-    if (!busy) $('run-simulation').querySelector('span').textContent = route.moves.length ? `Test ${route.moves.length} move${route.moves.length === 1 ? '' : 's'}` : 'Test starting stance';
+    $('run-simulation').hidden = !route.moves.length;
+    if (!busy) { $('run-simulation').querySelector('span').textContent = `Test ${route.moves.length} move${route.moves.length === 1 ? '' : 's'}`; $('test-pose').querySelector('span').textContent = 'Test this pose'; }
     $('assign-limb').textContent = mode === 'start' ? 'Set contact' : 'Add move';
     $('limb-controls').replaceChildren(...E.LIMBS.map(limb => {
       const b = make('button', `limb-control${selectedLimb === limb ? ' selected' : ''}`); b.type = 'button'; b.style.setProperty('--limb', colors[limb]); b.setAttribute('aria-pressed', String(selectedLimb === limb));
@@ -276,7 +287,7 @@
         preview = p; previewRevision = revision;
         const gap = p.maxResidualM < .01 ? `${(p.maxResidualM * 1000).toFixed(1)} mm` : `${(p.maxResidualM * 100).toFixed(1)} cm`;
         const poseName = mode === 'moves' && store.route.moves.length ? 'Planned end pose' : 'Starting body pose';
-        $('preview-status').textContent = p.converged ? `${poseName} found. This checks reach only; test the move to check motion, grip and stability.` : `The pose solver cannot match all contacts. Largest gap: ${gap}. Large gaps appear as dashed links; small errors may not be visible. Try closer holds.`;
+        $('preview-status').textContent = p.converged ? `${poseName} found. Reach only so far. Test this pose for support, or test the moves to check how the model gets there.` : `The pose solver has not matched all contacts. Largest gap: ${gap}. Dashed links show the remaining gaps. Try adjusting the holds; this is not a physical impossibility verdict.`;
         $('preview-status').classList.toggle('preview-warning', !p.converged); draw();
       } catch {
         if (revision !== store.revision || requestedMode !== mode || controller !== previewController) return;
@@ -300,29 +311,39 @@
     simulatorUrl = $('simulator-url').value.trim(); try { endpoint('/api/health'); try { localStorage.setItem('ascent.simulatorUrl', simulatorUrl); } catch {} checkConnection(); schedulePreview(); }
     catch (error) { $('connection-status').textContent = error.message; }
   });
-  $('run-simulation').addEventListener('click', async () => {
+  async function runSimulation(checkType) {
     if (busy) return;
     const token = store.beginRun(), request = ++runId, controller = new AbortController(), started = Date.now(); let timer, elapsedTimer;
+    const requestedScopeRevision = poseScopeRevision;
+    const isStale = () => request !== runId || token.revision !== store.revision || checkType === 'pose' && requestedScopeRevision !== poseScopeRevision;
+    const poseScope = mode === 'moves' && token.route.moves.length ? 'final' : 'starting';
+    if (checkType === 'pose') { token.route.start = E.assignments(token.route, mode === 'moves'); token.route.moves = []; }
     try {
-      E.validate(token.route); const url = endpoint('/api/simulate'); busy = true; $('run-example').disabled = true; $('run-simulation').disabled = true; $('run-simulation').querySelector('span').textContent = 'Simulating…'; $('view-result').hidden = true;
-      const showElapsed = () => { if (token.revision === store.revision) setStatus(`Simulating · ${Math.floor((Date.now() - started) / 1000)}s elapsed`, 'Calculating the body motion and contact forces. The animation starts when the result is ready.', 'running'); };
+      E.validate(token.route); const url = endpoint('/api/simulate'); busy = true; activeCheckType = checkType;
+      ['run-example', 'run-simulation', 'test-pose'].forEach(id => $(id).disabled = true);
+      $(checkType === 'pose' ? 'test-pose' : 'run-simulation').querySelector('span').textContent = 'Simulating…'; $('view-result').hidden = true;
+      const showElapsed = () => { if (!isStale()) setStatus(`Simulating · ${Math.floor((Date.now() - started) / 1000)}s elapsed`, checkType === 'pose' ? `Checking whether the ${poseScope} contacts support the model through settling. Your planned moves are kept.` : 'Calculating the body motion and contact forces. The animation starts when the result is ready.', 'running'); };
       showElapsed(); elapsedTimer = setInterval(showElapsed, 1000);
       timer = setTimeout(() => controller.abort(), 180000);
       const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({route: token.route, frameEvery: 20}), signal: controller.signal});
       let data; try { data = await response.json(); } catch { throw new Error('No simulator API is available here. Open Simulator connection to connect the local app or a hosted server.'); }
       if (!response.ok) throw new Error(data.error || (response.status === 429 ? 'The simulator is busy. Try again when the current run finishes.' : 'The simulator could not run this route.'));
       if (!data.trajectory || typeof data.trajectory.success !== 'boolean') throw new Error('The simulator returned no valid trajectory.');
-      if (request !== runId || token.revision !== store.revision) { setStatus('Edits kept, older result discarded', 'The route changed while the simulation was running. Run again to test the current version.'); return; }
+      if (isStale()) { setStatus('Edits kept, older result discarded', 'The route or displayed pose changed while the simulation was running. Run again to test the current version.'); return; }
+      data.trajectory.checkType = checkType;
+      if (checkType === 'pose') data.trajectory.poseScope = poseScope;
       window.ClimbReplay.loadTrajectory(data.trajectory, {autoplay: true});
       store.accept(token, data.trajectory);
       const result = E.describeResult(data.trajectory); setStatus(result.title, result.text, result.kind);
       $('replay-tab').disabled = false; $('view-result').hidden = false; showTab('replay');
     } catch (error) {
-      if (request !== runId || token.revision !== store.revision) { setStatus('Edits kept, older result discarded', 'The previous run ended after the route changed. Run again to test the current version.'); return; }
+      if (isStale()) { setStatus('Edits kept, older result discarded', 'The previous run ended after the route or displayed pose changed. Run again to test the current version.'); return; }
       setStatus('Simulation unavailable', error.name === 'AbortError' ? 'The request timed out. The server may still be finishing its run. Try again shortly.' : error.message === 'Failed to fetch' || error instanceof TypeError ? 'Could not reach the Python simulator. Check Simulator connection, then run again. Your edits are saved in this tab.' : error.message, 'error');
       if (error instanceof TypeError) $('connection-label').textContent = 'Connect simulator';
-    } finally { clearTimeout(timer); clearInterval(elapsedTimer); busy = false; $('run-example').disabled = false; $('run-simulation').disabled = false; renderControls(); }
-  });
+    } finally { clearTimeout(timer); clearInterval(elapsedTimer); busy = false; activeCheckType = null; ['run-example', 'run-simulation', 'test-pose'].forEach(id => $(id).disabled = false); renderControls(); }
+  }
+  $('test-pose').addEventListener('click', () => runSimulation('pose'));
+  $('run-simulation').addEventListener('click', () => runSimulation('moves'));
   $('run-example').addEventListener('click', () => {
     if (busy) return;
     const route = E.clone(starter); route.moves = [{limb: 'left_hand', hold: 'target_left'}];
