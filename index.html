@@ -4,25 +4,49 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#17292b">
-  <meta name="description" content="Explore recorded MuJoCo climbing trajectories, grip forces, and the exact reason a controlled move passes or fails.">
+  <meta name="description" content="Design a climbing route, move holds and limbs, then test your sequence with a torque-limited MuJoCo climbing model.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2317292b'/%3E%3Cpath d='M12 49 31 13 51 49M22 34h19' fill='none' stroke='%23eaaa68' stroke-width='5'/%3E%3C/svg%3E">
   <title>Ascent | Climbing Mechanics Lab</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="data.js"></script>
   <script defer src="geometry.js"></script>
   <script defer src="viewer.js"></script>
+  <script defer src="editor-state.js"></script>
+  <script defer src="editor.js"></script>
 </head>
 <body>
   <header class="masthead">
     <a class="brand" href="#" aria-label="Ascent home"><svg width="29" height="29" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 27 15.8 4 29 27M9 17h14" fill="none" stroke="currentColor" stroke-width="2.4"/></svg><span>ASCENT<span class="brand-rule">/</span><span class="brand-sub">MECHANICS LAB</span></span></a>
-    <div class="mast-meta"><span class="status-dot"></span> MUJOCO TRAJECTORY EXPLORER <span class="version">01</span></div>
+    <div class="mast-meta"><span class="status-dot"></span> CLIMBING PHYSICS WORKBENCH <span class="version">02</span></div>
   </header>
   <main>
     <section class="intro" aria-labelledby="page-title">
-      <div><div class="eyebrow">COMPUTATIONAL CLIMBING · INTERACTIVE STUDY</div><h1 id="page-title">Climbing mechanics <em>in motion.</em></h1><p>Explore the motion, contact forces and limits of each move.</p></div>
-      <div class="intro-note"><span class="small-cross">+</span><p>Simulated motion. Recorded forces.<br><span>Free-floating body · torque-limited joints<br>Per-hold grip constraints</span></p></div>
+      <div><div class="eyebrow">COMPUTATIONAL CLIMBING · INTERACTIVE LAB</div><h1 id="page-title">Every move has <em>its limits.</em></h1><p>Build a route. Place the climber. Find out what the model can do.</p></div>
+      <div class="intro-note"><span class="small-cross">+</span><p>Your route. A fresh simulation.<br><span>Free-floating body · torque-limited joints<br>Per-hold grip and friction constraints</span></p></div>
     </section>
 
+    <nav class="lab-tabs" aria-label="Workbench view"><button id="editor-tab" class="active" aria-pressed="true" aria-controls="editor-stage">Route editor <span>01</span></button><button id="replay-tab" aria-pressed="false" aria-controls="replay-stage">Simulation replay <span>02</span></button><span class="tab-note">DESIGN → SIMULATE → INSPECT</span></nav>
+    <section id="editor-stage" class="editor-workspace" aria-label="Interactive climbing route editor">
+      <div class="editor-topbar"><div class="editor-template"><label for="editor-template">START WITH</label><select id="editor-template" aria-label="Choose route template"></select></div><div class="editor-top-actions"><button id="editor-undo" title="Undo the last route edit" disabled>Undo</button><button id="editor-reset">Reset route</button><button id="editor-import">Import route</button><input id="editor-import-file" type="file" accept=".json,application/json" hidden><button id="editor-export">Export JSON</button></div></div>
+      <div class="editor-grid">
+        <div class="planner-panel">
+          <div class="planner-toolbar"><div class="segmented" role="group" aria-label="Dragging tool"><button id="tool-holds" class="active" aria-pressed="true">Move holds</button><button id="tool-limbs" aria-pressed="false">Place limbs</button></div><button id="add-hold" class="quiet-button">+ Add hold</button><button id="planner-fit" class="quiet-button" title="Fit all holds into view">Fit view</button></div>
+          <div class="planner-viewport"><canvas id="planner" tabindex="0" aria-label="Front-view route planner. Drag holds to reposition them. In Place limbs mode, drag a labeled hand or foot onto a hold. Keyboard controls are in the route inspector."></canvas><div class="planner-caption"><span class="recording-mark"><i></i> FRONT VIEW · PLANNING ONLY</span><span id="planner-scale">0.25 m GRID</span></div><div id="planner-context" class="planner-context">Drag a hold to reshape the route.</div><div class="planner-bottom"><label><input id="snap-grid" type="checkbox" checked> Snap to 1 cm</label><span>SCROLL TO ZOOM · DRAG TO PAN EMPTY SPACE</span></div></div>
+          <div class="planner-scope"><span class="tiny-square"></span> The figure shows your planned contacts. Run the simulation to calculate motion and forces.</div>
+        </div>
+        <aside class="route-inspector" aria-label="Route and limb controls">
+          <div class="inspector-heading"><span class="eyebrow">YOUR EXPERIMENT</span><span id="edit-revision">DRAFT 01</span></div>
+          <label class="field-label" for="editor-name">Route name</label><input id="editor-name" class="full-input" maxlength="80" autocomplete="off">
+          <div class="inspector-section"><div class="section-title"><h2>Place the climber</h2><span id="assignment-count">4 CONTACTS</span></div><div class="segmented assignment-mode" role="group" aria-label="Limb assignment mode"><button id="mode-start" class="active" aria-pressed="true">Start pose</button><button id="mode-moves" aria-pressed="false">Add move</button></div><p id="assignment-help" class="inspector-hint">Drag a limb handle onto a hold to set its starting contact.</p><div id="limb-controls" class="limb-controls"></div><div class="assignment-action"><select id="assignment-target" aria-label="Target hold for selected limb"></select><button id="assign-limb">Set contact</button></div></div>
+          <div class="inspector-section hold-inspector"><div class="section-title"><h2>Hold properties</h2><button id="delete-hold" class="text-button">Remove</button></div><label class="sr-only" for="selected-hold">Selected hold</label><select id="selected-hold" class="full-input"></select><div class="coordinate-fields"><label>X <input id="hold-x" type="number" step=".01" min="-3" max="3"></label><label>Height <input id="hold-z" type="number" step=".01" min=".05" max="5"></label><span>m</span></div><div class="property-fields"><label>Type<select id="hold-type"><option value="jug">Jug</option><option value="crimp">Crimp</option><option value="sloper">Sloper</option><option value="foothold">Foothold</option></select></label><label>Grip cap · N<input id="hold-cap" type="number" step="10" min="1" max="10000"></label><label>Friction · μ<input id="hold-friction" type="number" step=".05" min=".01" max="4"></label></div></div>
+          <div class="inspector-section move-section"><div class="section-title"><h2>Move sequence <span id="move-count">0</span></h2><button id="clear-moves" class="text-button">Clear</button></div><ol id="move-list" class="move-list"></ol><p id="empty-moves" class="inspector-hint">No moves yet. Switch to Add move and drag a limb to a new hold. You can also test the starting stance on its own.</p></div>
+        </aside>
+      </div>
+      <div class="run-panel"><div id="editor-verdict" class="editor-verdict" role="status" aria-live="polite"><span class="verdict-dot"></span><div><strong id="editor-verdict-title">Ready to test your route</strong><p id="editor-status">Every run uses your current holds, starting contacts and move sequence.</p></div></div><button id="run-simulation" class="run-button"><span>Run simulation</span><span class="run-engine">MUJOCO</span></button><button id="view-result" class="quiet-button" hidden>View replay</button></div>
+      <div class="editor-footnote"><span>Model feasibility only. A failed controller attempt does not prove a human move is impossible. Body–wall collision response is not modeled.</span><details class="connection-settings"><summary><span id="connection-label">Simulator connection</span></summary><div class="connection-popover"><label for="simulator-url">Simulator URL</label><input id="simulator-url" type="url" placeholder="Same origin, or https://your-simulator…"><button id="save-connection">Connect</button><p id="connection-status" role="status">The local app connects automatically. A hosted copy needs a running Python simulator.</p><a href="https://github.com/Junnie18/climb-move-sim#interactive-route-editor" target="_blank" rel="noopener">Local setup instructions</a></div></details></div>
+    </section>
+
+    <div id="replay-stage" hidden>
     <div class="workspace">
       <section class="scene-panel" aria-label="Climbing trajectory playback">
         <div class="scene-toolbar">
@@ -31,7 +55,7 @@
         </div>
         <div class="viewport" id="viewport">
           <canvas id="scene" aria-label="Three-dimensional projection of the recorded climber, holds, and wall. Drag to orbit; scroll to zoom." tabindex="0"></canvas>
-          <div class="scene-topline"><span class="recording-mark"><i></i> PRECOMPUTED PHYSICS</span><span id="frame-count">FRAME — / —</span></div>
+          <div class="scene-topline"><span class="recording-mark"><i></i> <span id="replay-origin">RECORDED PHYSICS</span></span><span id="frame-count">FRAME — / —</span></div>
           <div class="scene-label"><div class="eyebrow">CURRENT PHASE</div><strong id="phase-label">Loading</strong><span id="move-label">Recorded MuJoCo body transforms</span></div>
           <div class="view-controls" role="group" aria-label="Camera view"><button data-view="orbit" class="active" aria-pressed="true">3D</button><button data-view="front" aria-pressed="false">Front</button><button data-view="side" aria-pressed="false">Side</button><button id="reset-view" title="Reset camera" aria-label="Reset camera">↺</button></div>
           <div class="scene-options"><label><input type="checkbox" id="show-forces" checked><span>Force vectors</span></label><label><input type="checkbox" id="show-com" checked><span>Center of mass</span></label></div>
@@ -63,16 +87,17 @@
       <div class="result-summary"><div class="eyebrow">FULL ATTEMPT VERDICT</div><h2 id="verdict-title">Reading the record.</h2><p id="verdict-description">Each experiment follows a controlled sequence of single-limb moves.</p><div id="failure-detail" class="failure-detail" hidden></div></div>
       <div class="outcomes-panel"><div class="outcome-heading"><span class="eyebrow">EXECUTION TRACE</span><span id="outcome-count"></span></div><ol id="outcomes" class="outcomes"></ol></div>
     </section>
+    </div>
 
     <section class="method-row" aria-label="Method and reproducibility">
       <div><span class="section-number">01 / METHOD</span><h3>Reach. Move. Settle.</h3><p>Numerical inverse kinematics checks the target. Torque-limited actuators drive the transition under gravity. Actual solver forces are checked against grip ratings and applicable friction cones.</p></div>
       <div><span class="section-number">02 / SCOPE</span><h3>A model, with boundaries.</h3><p id="limitations">Controlled reaches on synthetic routes. Grip and actuator parameters are illustrative. No dynamic catches, deformable fingers, or body–wall collision. A controller failure is not proof that a human move is impossible.</p></div>
-      <div><span class="section-number">03 / REPRODUCE</span><h3>Bring your own sequence.</h3><p>This page plays saved trajectories; physics runs in Python. Change a route JSON, then export a new record.</p><details><summary>Show local workflow <span>↗</span></summary><pre><code>python scripts/export_trajectory.py \
+      <div><span class="section-number">03 / REPRODUCE</span><h3>Keep the experiment.</h3><p>Export your edited route as JSON. Fresh simulation results open in the replay with forces and an execution trace.</p><details><summary>Show local workflow <span>↗</span></summary><pre><code>python scripts/export_trajectory.py \
   data/routes/showcase/01_supported_steps.json out.json
 
 # Open a single exported trajectory here:</code></pre><label id="import-trigger" class="import-button" for="import-file" role="button" tabindex="0">Load trajectory JSON <span>↑</span></label><input id="import-file" type="file" accept=".json,application/json" hidden><p id="import-status" class="import-status" role="status"></p><p class="workflow-note">Route JSON describes holds, a start stance, and moves. Run the exporter first; the browser accepts its trajectory output.</p></details></div>
     </section>
   </main>
-  <footer><span>ASCENT <span class="footer-divider">/</span> A study in climbing mechanics</span><a href="https://github.com/Junnie18/climb-move-sim/tree/codex/physics-showcase">Source & method</a><a href="supported-steps.mp4">Watch the video</a><span>PYTHON + MUJOCO → RECORDED DATA → CANVAS</span></footer>
+  <footer><span>ASCENT <span class="footer-divider">/</span> A study in climbing mechanics</span><a href="https://github.com/Junnie18/climb-move-sim">Source & method</a><a href="supported-steps.mp4">Watch the video</a><span>DESIGNED IN YOUR BROWSER · SOLVED IN MUJOCO</span></footer>
 </body>
 </html>
