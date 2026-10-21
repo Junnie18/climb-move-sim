@@ -7,19 +7,20 @@ offline still supports route editing and recorded replays.
 
 ## Show the interactive editor
 
-1. Choose **Supported hand sequence** and run it unchanged. The controller
-   should complete its four small hand moves. Open the replay to inspect loads.
+1. Run the example. The controller performs a visible 20 cm hand move, and
+   the fresh replay starts automatically. Inspect the changing support loads.
 2. Return to the editor. Drag a target hand hold much higher. The previous
    verdict is cleared immediately. Run again and inspect the returned failure.
-3. Reset the route, clear the moves, choose **Place limbs** and **Add move**, then
-   drag a hand handle onto the next nearby hold. The explicit move list is what
-   will be simulated. **Start pose** instead changes the initial stance.
+3. Reset the route, then drag a hand handle onto a nearby target. The explicit
+   move list is what will be simulated. Advanced starting-contact controls
+   instead change the initial stance. A zero-move test checks that stance.
 4. Show grip capacity and friction in the hold inspector. Explain that reaching
    a point is only part of the problem: the remaining contacts must support the
    body, and the arriving limb must establish a valid contact.
 
 This is model/controller feasibility, with illustrative strengths and no
 body-wall collision response. A failed solve is not proof of human impossibility.
+The quick articulated preview checks kinematic geometry only, not support loads.
 
 ## A 90-second walkthrough
 

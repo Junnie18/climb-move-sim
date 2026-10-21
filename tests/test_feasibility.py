@@ -5,10 +5,47 @@ is rejected because unilateral feet cannot supply its requested shear.
 
 from pathlib import Path
 
-from climbsim.feasibility import attempt_route
+from climbsim.feasibility import AttemptResult, INITIAL_SETTLE_S, attempt_route
+from climbsim.holds import Hold, HoldType
 from climbsim.route import Route
 
 ROUTES_DIR = Path(__file__).resolve().parents[1] / "data" / "routes"
+
+
+def test_zero_move_route_reports_a_successfully_held_starting_stance():
+    route = Route.from_json(str(ROUTES_DIR / "showcase" / "01_supported_steps.json"))
+    route.moves = []
+    assert not AttemptResult(route).success, "an unexecuted stance is not a successful check"
+    result = attempt_route(route)
+    assert result.success
+    assert not result.fell
+    assert result.first_failure is None
+    assert len(result.outcomes) == 1
+    outcome = result.outcomes[0]
+    assert outcome.move is None
+    assert outcome.passed
+    assert outcome.phase == "initialization"
+    assert outcome.detail["duration_s"] == INITIAL_SETTLE_S
+    assert outcome.detail["time_s"] >= INITIAL_SETTLE_S - 1e-9
+
+
+def test_zero_move_route_does_not_hide_a_failed_starting_pose():
+    route = Route.from_json(str(ROUTES_DIR / "showcase" / "01_supported_steps.json"))
+    route.moves = []
+    route.holds["rh0"] = Hold("rh0", (10.0, 0.05, 1.55), HoldType.JUG)
+    result = attempt_route(route)
+    assert not result.success
+    assert result.first_failure.detail["category"] == "initial_ik_nonconvergence"
+
+
+def test_zero_move_route_does_not_hide_a_starting_grip_failure():
+    route = Route.from_json(str(ROUTES_DIR / "showcase" / "01_supported_steps.json"))
+    route.moves = []
+    hold = route.hold("lf0")
+    route.holds["lf0"] = Hold("lf0", hold.pos, hold.type, max_grip_n_override=1.0)
+    result = attempt_route(route)
+    assert not result.success
+    assert result.first_failure.detail["category"] == "grip_strength_exceeded"
 
 
 def test_legacy_ladder_rejects_the_second_foot_contact_cone_violation():

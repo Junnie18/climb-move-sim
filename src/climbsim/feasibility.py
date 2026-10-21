@@ -7,6 +7,7 @@ positions during a move, and no grip is attached before the limb arrives.
 """
 
 from dataclasses import dataclass, field
+from math import sqrt
 from typing import List, Optional
 
 import mujoco
@@ -53,7 +54,8 @@ class AttemptResult:
 
     @property
     def success(self) -> bool:
-        return len(self.outcomes) == len(self.route.moves) and bool(self.outcomes) and all(
+        completed_moves = sum(o.move is not None for o in self.outcomes)
+        return completed_moves == len(self.route.moves) and bool(self.outcomes) and all(
             o.passed for o in self.outcomes) and not self.fell
 
     @property
@@ -139,16 +141,16 @@ def _support_torques(cm: ClimberModel, current_holds: dict) -> np.ndarray:
                 normal = np.asarray(hold.normal)
                 n = float(f @ normal)
                 tangent = f - n * normal
-                t = float(np.linalg.norm(tangent))
+                t = sqrt(float(tangent @ tangent))
                 mu = hold.friction * 0.75  # controller reserve; physical limit stays unchanged
                 if t > mu * n or n < 0:
                     projected_n = max(0.0, (n + mu * t) / (1 + mu * mu))
                     f[:] = projected_n * normal + tangent * (mu * projected_n / max(t, 1e-15))
-            magnitude = float(np.linalg.norm(f))
+            magnitude = sqrt(float(f @ f))
             if magnitude > 0.85 * hold.max_grip_n:
                 f *= 0.85 * hold.max_grip_n / magnitude
         error = target - base_map @ forces
-        if np.linalg.norm(error) < 1e-5:
+        if sqrt(float(error @ error)) < 1e-5:
             break
         if projection_step < 119:
             forces += inverse @ error
@@ -307,6 +309,12 @@ def attempt_route(route: Route, renderer=None, frame_every: int = 15, *,
     if bad is not None:
         bad.reason = "starting stance failed: " + bad.reason
         finish_failure(bad, -1, fall=True)
+        return result
+    if not route.moves:
+        result.outcomes.append(MoveOutcome(None, True, "initialization",
+            f"Starting stance held for {INITIAL_SETTLE_S:g} seconds",
+            dict(category="completed", duration_s=INITIAL_SETTLE_S,
+                 time_s=float(cm.data.time))))
         return result
 
     for move_index, move in enumerate(route.moves):

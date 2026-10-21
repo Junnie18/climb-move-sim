@@ -87,6 +87,70 @@ def test_actual_edited_routes_produce_different_physics_and_original_definition(
     assert trajectory["routeDefinition"]["holds"][4]["pos"][2] == 4
 
 
+def preview(server, route, headers=None):
+    status, response_headers, raw = request(server, "POST", "/api/preview",
+        json.dumps({"route": route}), {"Content-Type": "application/json", **(headers or {})})
+    return status, response_headers, json.loads(raw)
+
+
+def test_pose_preview_returns_actual_reachable_sites_without_a_force_verdict(server, route_data):
+    import numpy as np
+
+    # Preview is based on start assignments, never on the preloaded move list.
+    route_data["start"]["left_hand"] = "hand_step_2"
+    status, _, data = preview(server, route_data)
+    assert status == 200
+    pose = data["preview"]
+    assert pose["converged"] is True
+    assert pose["maxResidualM"] <= 0.0001
+    assert len(pose["bodyNames"]) == len(pose["pos"]) == len(pose["quat"]) == 13
+    assert pose["limbs"] == ["left_hand", "right_hand", "left_foot", "right_foot"]
+    holds = {hold["name"]: hold for hold in route_data["holds"]}
+    for index, limb in enumerate(pose["limbs"]):
+        target = holds[route_data["start"][limb]]["pos"]
+        assert pose["targets"][index] == target
+        residual = np.linalg.norm(np.asarray(pose["sites"][index]) - target)
+        assert residual == pytest.approx(pose["residuals"][index])
+    assert pose["geometry"]["massKg"] == pytest.approx(70)
+    assert "success" not in pose and "forces" not in pose
+    assert any("force" in text.lower() for text in pose["limitations"])
+    assert not server.runner.busy
+
+
+def test_unresolved_pose_preview_returns_best_finite_pose_and_target_errors(server, route_data):
+    import numpy as np
+
+    route_data["holds"][0]["pos"][0] = -2.5
+    status, _, data = preview(server, route_data)
+    assert status == 200
+    pose = data["preview"]
+    assert pose["converged"] is False
+    assert pose["maxResidualM"] > 0.1
+    assert np.all(np.isfinite(pose["pos"]))
+    assert np.all(np.isfinite(pose["sites"]))
+    assert max(pose["residuals"]) == pose["maxResidualM"]
+
+
+def test_pose_preview_validates_input_and_request_size_before_solving(server, route_data):
+    route_data["holds"][0]["pos"][0] = 100
+    status, _, data = preview(server, route_data)
+    assert status == 422
+    assert "error" in data
+    assert request(server, "POST", "/api/preview", "x" * 140_000,
+                   {"Content-Type": "application/json"})[0] == 413
+
+
+def test_pose_preview_preserves_simulator_cors_rules(server, route_data):
+    allowed = {"Origin": "https://junnie18.github.io"}
+    status, headers, _ = request(server, "OPTIONS", "/api/preview", headers=allowed)
+    assert status == 204
+    assert headers["Access-Control-Allow-Origin"] == "https://junnie18.github.io"
+    status, headers, _ = preview(server, route_data, allowed)
+    assert status == 200
+    assert headers["Access-Control-Allow-Origin"] == "https://junnie18.github.io"
+    assert preview(server, route_data, {"Origin": "https://unrelated.example"})[0] == 403
+
+
 def test_busy_job_rejects_second_simulation_without_blocking_health(server, route_data):
     with ThreadPoolExecutor(max_workers=1) as pool:
         running = pool.submit(post, server, {"route": route_data})

@@ -12,17 +12,20 @@ the other three contacts support the body while it moves?”
 
 **[Open the live climbing lab](https://ascent-climbing-lab.vercel.app/)**
 
-1. Pick a route template. In **Move holds**, drag a hold to change its position.
-2. Switch to **Place limbs**. **Start pose** assigns the four starting contacts;
-   **Add move** appends a hand or foot move to the sequence.
-3. Drag a labeled limb handle onto a hold, or select a limb and target in the
-   inspector. Hold coordinates, type, grip capacity and friction are editable.
-4. Click **Run simulation**. The Python service simulates the edited route in
-   MuJoCo and returns a new verdict and trajectory. Open **View replay** to
-   inspect the motion, contacts and force history.
+1. Start with the empty move sequence. Drag a labeled hand or foot onto a
+   numbered hold to add a move. Drag the holds themselves to reshape the route.
+2. Check the queued moves beside the wall, then test the route. You can also
+   run the example to see a single 20 cm hand movement immediately.
+3. The Python service simulates the current route in MuJoCo. Fresh results play
+   automatically and explain whether the movement completed or what failed.
+4. Return to editing to adjust the route. Advanced controls expose starting
+   contacts, hold coordinates, grip capacity, friction, import and export.
 
 Edits clear the previous verdict. Undo and reset also require a fresh run. The
-planning figure illustrates contact assignments; it is not a solved body pose.
+planning preview uses whole-body inverse kinematics to find a joint pose for
+the current contacts. It checks geometry only; the full simulation checks
+movement and support forces. An unresolved preview does not stretch the body
+to pretend the target was reached.
 Use **Export JSON** to keep a route and **Import route** to reopen it. The
 service does not maintain a route database.
 
